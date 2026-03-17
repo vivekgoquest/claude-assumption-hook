@@ -1,0 +1,215 @@
+{"sentence": "I think the timeout is 30 seconds", "intent": "assert_unverified", "block": true}
+{"sentence": "I think the config is stored in /etc/app", "intent": "assert_unverified", "block": true}
+{"sentence": "I think this function handles authentication", "intent": "assert_unverified", "block": true}
+{"sentence": "I think the error is from a null pointer", "intent": "assert_unverified", "block": true}
+{"sentence": "I think the cron job runs hourly", "intent": "assert_unverified", "block": true}
+{"sentence": "I think the test coverage is around 80%", "intent": "assert_unverified", "block": true}
+{"sentence": "I believe the API returns JSON by default", "intent": "assert_unverified", "block": true}
+{"sentence": "I believe they use JWT tokens for auth", "intent": "assert_unverified", "block": true}
+{"sentence": "I believe the retry count is set to 3", "intent": "assert_unverified", "block": true}
+{"sentence": "I believe the service uses Redis", "intent": "assert_unverified", "block": true}
+{"sentence": "I suspect the connection pool is exhausted", "intent": "assert_unverified", "block": true}
+{"sentence": "I suspect there is a deadlock here", "intent": "assert_unverified", "block": true}
+{"sentence": "I assume the database supports JSON columns", "intent": "assert_unverified", "block": true}
+{"sentence": "I assume the API follows REST conventions", "intent": "assert_unverified", "block": true}
+{"sentence": "I presume the staging environment mirrors production", "intent": "assert_unverified", "block": true}
+{"sentence": "The timeout is probably 30 seconds", "intent": "assert_unverified", "block": true}
+{"sentence": "The database probably uses PostgreSQL", "intent": "assert_unverified", "block": true}
+{"sentence": "This probably runs on port 8080", "intent": "assert_unverified", "block": true}
+{"sentence": "The cache TTL is probably 5 minutes", "intent": "assert_unverified", "block": true}
+{"sentence": "The encryption is probably AES-256", "intent": "assert_unverified", "block": true}
+{"sentence": "The deployment is probably Kubernetes", "intent": "assert_unverified", "block": true}
+{"sentence": "The response time is probably around 200ms", "intent": "assert_unverified", "block": true}
+{"sentence": "The memory limit is probably 512MB", "intent": "assert_unverified", "block": true}
+{"sentence": "The file format is probably CSV", "intent": "assert_unverified", "block": true}
+{"sentence": "The rate limit is likely 100 requests per minute", "intent": "assert_unverified", "block": true}
+{"sentence": "The bottleneck is likely the database query", "intent": "assert_unverified", "block": true}
+{"sentence": "The issue likely stems from the caching layer", "intent": "assert_unverified", "block": true}
+{"sentence": "The API endpoint likely requires admin permissions", "intent": "assert_unverified", "block": true}
+{"sentence": "This is likely caused by a race condition", "intent": "assert_unverified", "block": true}
+{"sentence": "The bug is likely related to the async handler", "intent": "assert_unverified", "block": true}
+{"sentence": "It seems like the cache is returning stale data", "intent": "assert_unverified", "block": true}
+{"sentence": "It seems the DNS lookup is failing intermittently", "intent": "assert_unverified", "block": true}
+{"sentence": "It seems the worker thread is hanging", "intent": "assert_unverified", "block": true}
+{"sentence": "It looks like the migration did not run", "intent": "assert_unverified", "block": true}
+{"sentence": "It looks like the TLS certificate expired", "intent": "assert_unverified", "block": true}
+{"sentence": "It appears the load balancer is misconfigured", "intent": "assert_unverified", "block": true}
+{"sentence": "Maybe the issue is with the proxy configuration", "intent": "assert_unverified", "block": true}
+{"sentence": "Maybe the WebSocket connection drops on idle", "intent": "assert_unverified", "block": true}
+{"sentence": "Perhaps the environment variable is not set", "intent": "assert_unverified", "block": true}
+{"sentence": "Perhaps the disk is full on the worker node", "intent": "assert_unverified", "block": true}
+{"sentence": "Possibly the DNS resolution is failing intermittently", "intent": "assert_unverified", "block": true}
+{"sentence": "The function could be failing silently", "intent": "assert_unverified", "block": true}
+{"sentence": "The config could be overridden at runtime", "intent": "assert_unverified", "block": true}
+{"sentence": "The lock might be held too long by the writer", "intent": "assert_unverified", "block": true}
+{"sentence": "The socket might be timing out prematurely", "intent": "assert_unverified", "block": true}
+{"sentence": "The memory leak might come from event listeners", "intent": "assert_unverified", "block": true}
+{"sentence": "The crash might be triggered by concurrent access", "intent": "assert_unverified", "block": true}
+{"sentence": "The latency spike may be from garbage collection", "intent": "assert_unverified", "block": true}
+{"sentence": "The test may fail due to shared mutable state", "intent": "assert_unverified", "block": true}
+{"sentence": "Conceivably the issue only manifests under load", "intent": "assert_unverified", "block": true}
+{"sentence": "This is seemingly a threading issue", "intent": "assert_unverified", "block": true}
+{"sentence": "Apparently the auth middleware changed recently", "intent": "assert_unverified", "block": true}
+{"sentence": "My understanding is that the queue is FIFO", "intent": "assert_unverified", "block": true}
+{"sentence": "I feel like this should use a mutex instead", "intent": "assert_unverified", "block": true}
+{"sentence": "I would say the performance is adequate", "intent": "assert_unverified", "block": true}
+{"sentence": "From what I recall the default is 60 seconds", "intent": "assert_unverified", "block": true}
+{"sentence": "As far as I can tell the module is deprecated", "intent": "assert_unverified", "block": true}
+{"sentence": "If I recall correctly the limit is 1000", "intent": "assert_unverified", "block": true}
+{"sentence": "To my knowledge the feature is not supported", "intent": "assert_unverified", "block": true}
+{"sentence": "Based on my understanding this uses OAuth2", "intent": "assert_unverified", "block": true}
+{"sentence": "I'm fairly confident the issue is in the middleware", "intent": "assert_unverified", "block": true}
+{"sentence": "I'm reasonably sure the flag is deprecated", "intent": "assert_unverified", "block": true}
+{"sentence": "I'm pretty sure the timeout is 30 seconds", "intent": "assert_unverified", "block": true}
+{"sentence": "I'm not entirely sure about the encoding", "intent": "assert_unverified", "block": true}
+{"sentence": "I'm somewhat uncertain about the thread safety", "intent": "assert_unverified", "block": true}
+{"sentence": "Off the top of my head the limit is 500", "intent": "assert_unverified", "block": true}
+{"sentence": "The file has about 500 lines", "intent": "assert_unverified", "block": true}
+{"sentence": "There are approximately 20 endpoints", "intent": "assert_unverified", "block": true}
+{"sentence": "The response takes roughly 200ms", "intent": "assert_unverified", "block": true}
+{"sentence": "The queue has around 1000 items pending", "intent": "assert_unverified", "block": true}
+{"sentence": "The hook flagged the phrase \"I think\" in the response", "intent": "reference_language", "block": false}
+{"sentence": "The word \"probably\" triggered the hedging detector", "intent": "reference_language", "block": false}
+{"sentence": "When Claude says \"it seems like\", the hook catches it", "intent": "reference_language", "block": false}
+{"sentence": "The pattern matches words like \"likely\" and \"perhaps\"", "intent": "reference_language", "block": false}
+{"sentence": "The regex caught \"could be\" in the correction response", "intent": "reference_language", "block": false}
+{"sentence": "Flagged: \"I think\", \"probably\", \"might be\"", "intent": "reference_language", "block": false}
+{"sentence": "The sentence \"I think the bug is here\" was blocked", "intent": "reference_language", "block": false}
+{"sentence": "Claude wrote \"it appears\" which triggered the hook", "intent": "reference_language", "block": false}
+{"sentence": "The assumption guard blocks responses containing \"I assume\"", "intent": "reference_language", "block": false}
+{"sentence": "Pattern \"might be\" matched at position 42", "intent": "reference_language", "block": false}
+{"sentence": "\"Probably\" and \"likely\" are the most common hedging words", "intent": "reference_language", "block": false}
+{"sentence": "The hook caught \"from what I recall\" in turn 13", "intent": "reference_language", "block": false}
+{"sentence": "Stop hook error: Flagged \"I think\", \"probably\", \"likely\"", "intent": "reference_language", "block": false}
+{"sentence": "Hook output: decision=block, flagged=\"probably\"", "intent": "reference_language", "block": false}
+{"sentence": "Blocked for: \"could be\", \"it seems\", \"perhaps\"", "intent": "reference_language", "block": false}
+{"sentence": "Test 1: sentence with \"probably\" triggers BLOCK", "intent": "reference_language", "block": false}
+{"sentence": "Result: \"about 500 lines\" was classified as unverified_claim", "intent": "reference_language", "block": false}
+{"sentence": "Result: \"fairly standard\" was classified as idiom", "intent": "reference_language", "block": false}
+{"sentence": "The hook blocks \"I think\" but passes \"what do you think?\"", "intent": "reference_language", "block": false}
+{"sentence": "Confirmed: \"likely caused by X\" is speculation", "intent": "reference_language", "block": false}
+{"sentence": "Flag 1: \"I think the function probably returns null\"", "intent": "reference_language", "block": false}
+{"sentence": "Flag 2: \"The most likely cause is a race condition\"", "intent": "reference_language", "block": false}
+{"sentence": "1. \"I think the timeout is probably 30 seconds\"", "intent": "reference_language", "block": false}
+{"sentence": "2. \"This is probably a timing issue\"", "intent": "reference_language", "block": false}
+{"sentence": "| \"I think\" | BLOCK | BLOCK (unverified_claim) | Correct |", "intent": "reference_language", "block": false}
+{"sentence": "| \"probably\" | \"The function probably returns null\" | Yes |", "intent": "reference_language", "block": false}
+{"sentence": "| \"likely\" | \"This is likely caused by X\" | Yes |", "intent": "reference_language", "block": false}
+{"sentence": "| \"could be\" | \"The value could be None\" | No |", "intent": "reference_language", "block": false}
+{"sentence": "| \"fairly\" | \"fairly straightforward\" | No \u2014 idiom |", "intent": "reference_language", "block": false}
+{"sentence": "| \"rather\" | \"rather than using X\" | No \u2014 idiom |", "intent": "reference_language", "block": false}
+{"sentence": "| Probably a race condition | BLOCK | BLOCK | Yes |", "intent": "reference_language", "block": false}
+{"sentence": "| I think the timeout is 30s | BLOCK | BLOCK | Yes |", "intent": "reference_language", "block": false}
+{"sentence": "| About 500 lines | BLOCK | BLOCK | Yes |", "intent": "reference_language", "block": false}
+{"sentence": "| It seems like the cache | BLOCK | BLOCK | Yes |", "intent": "reference_language", "block": false}
+{"sentence": "| Maybe the connection pool | BLOCK | BLOCK | Yes |", "intent": "reference_language", "block": false}
+{"sentence": "The model classifies `I think...` in prose as BLOCK", "intent": "reference_language", "block": false}
+{"sentence": "TF-IDF sees \"I think\" in a normal sentence structure", "intent": "reference_language", "block": false}
+{"sentence": "Words like \"maybe\", \"perhaps\", and \"possibly\" are flagged", "intent": "reference_language", "block": false}
+{"sentence": "The phrase \"based on my understanding\" is in category 5", "intent": "reference_language", "block": false}
+{"sentence": "Genuine hedging (\"I think the timeout is probably...\") was blocked", "intent": "reference_language", "block": false}
+{"sentence": "The sentence contained \"I believe\" which was flagged", "intent": "reference_language", "block": false}
+{"sentence": "Example: \"I assume the database supports JSON\" should block", "intent": "reference_language", "block": false}
+{"sentence": "Example: \"The value might be null\" is type analysis", "intent": "reference_language", "block": false}
+{"sentence": "The return value could be None or a string", "intent": "describe_type", "block": false}
+{"sentence": "The input might be an array or a single object", "intent": "describe_type", "block": false}
+{"sentence": "The field could be null if the user hasn't set it", "intent": "describe_type", "block": false}
+{"sentence": "The response may contain either a list or a single item", "intent": "describe_type", "block": false}
+{"sentence": "The parameter could be undefined in strict mode", "intent": "describe_type", "block": false}
+{"sentence": "The value might be a number or a numeric string", "intent": "describe_type", "block": false}
+{"sentence": "The callback could be synchronous or asynchronous", "intent": "describe_type", "block": false}
+{"sentence": "The key could be a string or a Symbol", "intent": "describe_type", "block": false}
+{"sentence": "The argument might be optional in some overloads", "intent": "describe_type", "block": false}
+{"sentence": "The property could be inherited from the prototype", "intent": "describe_type", "block": false}
+{"sentence": "The buffer may contain binary or text data", "intent": "describe_type", "block": false}
+{"sentence": "This method could throw if the connection is closed", "intent": "describe_type", "block": false}
+{"sentence": "The promise might resolve with an empty array", "intent": "describe_type", "block": false}
+{"sentence": "The event could fire multiple times during resize", "intent": "describe_type", "block": false}
+{"sentence": "The variable may be uninitialized at this point", "intent": "describe_type", "block": false}
+{"sentence": "The generic type could be any subclass of Base", "intent": "describe_type", "block": false}
+{"sentence": "The nullable field might not be present in the response", "intent": "describe_type", "block": false}
+{"sentence": "The column could store either TEXT or JSONB", "intent": "describe_type", "block": false}
+{"sentence": "The enum may have additional variants in future versions", "intent": "describe_type", "block": false}
+{"sentence": "The iterator could yield zero or more results", "intent": "describe_type", "block": false}
+{"sentence": "Use a hashmap rather than a list for O(1) lookups", "intent": "compare", "block": false}
+{"sentence": "We should refactor this rather than adding more patches", "intent": "compare", "block": false}
+{"sentence": "Deploy to staging rather than directly to production", "intent": "compare", "block": false}
+{"sentence": "Consider using TypeScript rather than plain JavaScript", "intent": "compare", "block": false}
+{"sentence": "Return early rather than nesting multiple conditions", "intent": "compare", "block": false}
+{"sentence": "Use composition rather than inheritance here", "intent": "compare", "block": false}
+{"sentence": "Call the API once rather than making repeated requests", "intent": "compare", "block": false}
+{"sentence": "Use a mutex rather than a semaphore for this case", "intent": "compare", "block": false}
+{"sentence": "Prefer async/await rather than raw promises", "intent": "compare", "block": false}
+{"sentence": "Store state in the database rather than in memory", "intent": "compare", "block": false}
+{"sentence": "The implementation is fairly straightforward", "intent": "compare", "block": false}
+{"sentence": "The approach is fairly standard for REST APIs", "intent": "compare", "block": false}
+{"sentence": "This is a relatively small change", "intent": "compare", "block": false}
+{"sentence": "The migration is relatively simple", "intent": "compare", "block": false}
+{"sentence": "The codebase is relatively well-organized", "intent": "compare", "block": false}
+{"sentence": "We need to determine what kind of error this is", "intent": "compare", "block": false}
+{"sentence": "Check what kind of value the function returns", "intent": "compare", "block": false}
+{"sentence": "This is a certain kind of optimization pattern", "intent": "compare", "block": false}
+{"sentence": "It depends on what sort of input you provide", "intent": "compare", "block": false}
+{"sentence": "The code is somewhat verbose but readable", "intent": "compare", "block": false}
+{"sentence": "The API is somewhat inconsistent in naming", "intent": "compare", "block": false}
+{"sentence": "The performance is relatively good for this workload", "intent": "compare", "block": false}
+{"sentence": "The documentation is fairly complete", "intent": "compare", "block": false}
+{"sentence": "This is a fairly common pattern in web development", "intent": "compare", "block": false}
+{"sentence": "A relatively small refactor would fix this", "intent": "compare", "block": false}
+{"sentence": "If the flag is set, validation would be skipped entirely", "intent": "reason_conditionally", "block": false}
+{"sentence": "If we increase the pool size, throughput should improve", "intent": "reason_conditionally", "block": false}
+{"sentence": "If the token expires, the middleware would return 401", "intent": "reason_conditionally", "block": false}
+{"sentence": "Without proper indexing, queries could become very slow", "intent": "reason_conditionally", "block": false}
+{"sentence": "If the service is down, requests would fail with 503", "intent": "reason_conditionally", "block": false}
+{"sentence": "If we enable compression, the payload size would decrease", "intent": "reason_conditionally", "block": false}
+{"sentence": "If the user passes an invalid ID, the function would throw", "intent": "reason_conditionally", "block": false}
+{"sentence": "With caching enabled, repeated calls would be much faster", "intent": "reason_conditionally", "block": false}
+{"sentence": "If the migration fails, the transaction would roll back", "intent": "reason_conditionally", "block": false}
+{"sentence": "If we switch to streaming, memory usage would drop", "intent": "reason_conditionally", "block": false}
+{"sentence": "Unless the lock is released, other threads would block", "intent": "reason_conditionally", "block": false}
+{"sentence": "When the buffer fills, writes could block the caller", "intent": "reason_conditionally", "block": false}
+{"sentence": "Without authentication, the endpoint might return 403", "intent": "reason_conditionally", "block": false}
+{"sentence": "If the queue backs up, processing could halt entirely", "intent": "reason_conditionally", "block": false}
+{"sentence": "Removing this index could slow down the search query", "intent": "reason_conditionally", "block": false}
+{"sentence": "I cannot determine the exact version without checking package.json", "intent": "acknowledge_limit", "block": false}
+{"sentence": "Without access to the production logs, I cannot confirm this", "intent": "acknowledge_limit", "block": false}
+{"sentence": "The runtime behavior cannot be verified from the source code alone", "intent": "acknowledge_limit", "block": false}
+{"sentence": "I have not checked the external API documentation for this", "intent": "acknowledge_limit", "block": false}
+{"sentence": "This requires running the test suite to confirm", "intent": "acknowledge_limit", "block": false}
+{"sentence": "The actual performance numbers would need benchmarking", "intent": "acknowledge_limit", "block": false}
+{"sentence": "I cannot verify the deployment configuration from this codebase", "intent": "acknowledge_limit", "block": false}
+{"sentence": "Without the database schema, I cannot confirm the column types", "intent": "acknowledge_limit", "block": false}
+{"sentence": "This would need to be tested against the actual endpoint", "intent": "acknowledge_limit", "block": false}
+{"sentence": "I have not verified this against the latest API docs", "intent": "acknowledge_limit", "block": false}
+{"sentence": "Cannot determine from the available code whether this is thread-safe", "intent": "acknowledge_limit", "block": false}
+{"sentence": "The exact behavior depends on the runtime and cannot be checked statically", "intent": "acknowledge_limit", "block": false}
+{"sentence": "# This might need refactoring in the future", "intent": "code_content", "block": false}
+{"sentence": "// TODO: could be optimized with memoization", "intent": "code_content", "block": false}
+{"sentence": "# I think we should revisit this logic later", "intent": "code_content", "block": false}
+{"sentence": "// HACK: probably not the best approach", "intent": "code_content", "block": false}
+{"sentence": "# NOTE: this may cause issues with large inputs", "intent": "code_content", "block": false}
+{"sentence": "/* likely needs a more robust solution */", "intent": "code_content", "block": false}
+{"sentence": "# perhaps add error handling here", "intent": "code_content", "block": false}
+{"sentence": "// seems like a good candidate for extraction", "intent": "code_content", "block": false}
+{"sentence": "```python\n# I think this is the issue\n```", "intent": "code_content", "block": false}
+{"sentence": "The comment says `# might be null here`", "intent": "code_content", "block": false}
+{"sentence": "`// TODO: probably refactor this`", "intent": "code_content", "block": false}
+{"sentence": "In the code: `# likely deprecated`", "intent": "code_content", "block": false}
+{"sentence": "The implementation is fairly straightforward", "intent": "compare", "block": false}
+{"sentence": "The fix is fairly simple to apply", "intent": "compare", "block": false}
+{"sentence": "The test suite is fairly comprehensive", "intent": "compare", "block": false}
+{"sentence": "This is a fairly common antipattern", "intent": "compare", "block": false}
+{"sentence": "The change is fairly minimal", "intent": "compare", "block": false}
+{"sentence": "The syntax is fairly intuitive", "intent": "compare", "block": false}
+{"sentence": "The overhead is fairly negligible", "intent": "compare", "block": false}
+{"sentence": "The output is fairly readable", "intent": "compare", "block": false}
+{"sentence": "The API surface is fairly small", "intent": "compare", "block": false}
+{"sentence": "The error message is fairly descriptive", "intent": "compare", "block": false}
+{"sentence": "The solution is somewhat elegant", "intent": "compare", "block": false}
+{"sentence": "The refactor is somewhat involved", "intent": "compare", "block": false}
+{"sentence": "The difference is somewhat subtle", "intent": "compare", "block": false}
+{"sentence": "This approach is relatively efficient", "intent": "compare", "block": false}
+{"sentence": "The impact is relatively minor", "intent": "compare", "block": false}
+{"sentence": "The risk is relatively low", "intent": "compare", "block": false}
+{"sentence": "The setup is relatively painless", "intent": "compare", "block": false}
+{"sentence": "Processing is relatively fast for this dataset", "intent": "compare", "block": false}

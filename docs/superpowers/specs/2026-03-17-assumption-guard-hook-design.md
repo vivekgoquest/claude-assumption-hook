@@ -273,3 +273,74 @@ def main():
 - No infinite loop protection — runs until clean
 - No logging or metrics — ships bare
 - No Haiku/LLM-as-judge — Claude (Opus) does its own verification
+- No detection of **confident assertions without verification** (Failure Mode 2 — see below)
+
+---
+
+## Known Limitation: Failure Mode 2 — Confident Confabulation
+
+### The Problem This Hook Does NOT Solve
+
+This hook catches hedging language — words like "likely", "I think", "probably." But analysis of a real Opus conversation (Fish Audio S2 speed-control research, 2026-03-17) revealed a **more dangerous failure mode**: Opus makes specific technical claims with full confidence, backed by zero tool verification.
+
+The hedging hook catches the fish that signal they're uncertain. Failure Mode 2 is the fish that swim through with full confidence while being wrong.
+
+### Evidence From the Transcript
+
+Session: `~/.claude/projects/.../a015ffa7-b92b-4e73-b7f2-a8097e26f5cd.jsonl`
+
+**Turn 13** — Opus read 6 code files, then wrote a 7000-char analysis. It mixed verified code facts with ungrounded claims, all stated with equal confidence:
+
+| Claim (stated as fact) | Tool-verified? | Later proven... |
+|------------------------|---------------|-----------------|
+| "Fish S2 already supports `[slow]`, `[in a hurry]` tags — speed control is already solved" | No — never searched for `[slow]` in code or tested it | Wrong. No `[slow]` tag exists in the trained model. |
+| "93.3% tag-activation rate" applies to speed control | No — number is from tech report about emotion/style tags | Misleading. Does not apply to duration. |
+| "There's no special speaker embedding layer" | Partial — quick code scan | Correct, but was not rigorously verified. |
+
+This single unverified claim ("NL tags already solve speed control") led Opus to dismiss the user's entire recommendation as "largely misguided." The verdict was built on an assumption, not evidence.
+
+**Turn 14** — User said "my use case is dubbing." Opus produced a full pipeline design with specific numbers (21.5 Hz frame rate, 46.5ms per token, WSOLA recommendations, pipeline diagrams). **Zero tool calls in this turn.** Every number was derived from the mental model built in Turn 13, which was already partially wrong.
+
+**Turn 17** — After the user corrected Opus on IndexTTS, Opus reversed its position and produced a new design with LoRA hyperparameters ("rank 16-32, learning rate ~1e-4") and the critical training data claim ("every existing sample already has duration — no new data needed"). **Zero tool calls.** Opus later admitted: "recommended LoRA hyperparameters by analogy rather than grounding."
+
+**Turn 23** — Opus fetched config.json (good), then repeated the training data claim alongside verified config values. The verified and unverified facts were visually indistinguishable.
+
+### The Pattern
+
+Opus reads code in early turns, builds a mental model, then **free-associates from that model across multiple subsequent turns without going back to verify**. Each turn drifts further from grounded facts. Verified code details and ungrounded inferences are presented with identical confidence and formatting.
+
+The user had to explicitly say "check every assumption" to trigger self-correction (Turn 30). Without that prompt, the unverified claims would have stood.
+
+### Why Regex Can't Catch This
+
+Failure Mode 2 has no linguistic signal. The claims use no hedging words:
+- "Fish S2 already supports inline tags like `[slow]`" — no hedge
+- "Every training sample already has duration information" — no hedge
+- "LoRA: rank 16-32 on q_proj, k_proj, v_proj" — no hedge
+
+These are stated as facts. The signal is structural, not lexical: **the ratio of specific technical claims to tool calls in the same turn is too high.**
+
+### v2 Direction: Claims-to-Tools Ratio Detection
+
+A future hook could detect this by:
+
+1. **Counting technical claims** in the assistant's response — look for:
+   - Specific numbers (frame rates, dimensions, percentages)
+   - Function/class/file name references not seen in tool results this turn
+   - Architecture assertions ("X uses Y", "X supports Z", "X does NOT have Z")
+   - Recommendations with specific parameters (hyperparameters, bin counts, layer names)
+
+2. **Counting tool calls** in the same turn — Read, Grep, Bash, Agent, WebFetch
+
+3. **Flagging when the ratio is suspicious** — e.g., 10+ specific technical claims but 0 tool calls in this turn. The block reason would say: "You made N specific technical claims in this response but used 0 tools to verify them. Go back and verify: [list of claims]."
+
+This would require either:
+- A `prompt` hook (Haiku extracts claims from the response, compares to tool usage)
+- An `agent` hook (subagent with tool access parses the transcript and counts)
+- A more sophisticated `command` hook with heuristic claim detection (regex for numbers, function names, file paths not in tool results)
+
+### The Fundamental Insight
+
+> **Opus's most dangerous mode is not when it hedges — it's when it doesn't.**
+>
+> Hedging at least signals uncertainty to the user. Confident confabulation gives the user no signal at all. The v1 hook catches the honest failures. A v2 hook would need to catch the dishonest ones — claims that sound verified but aren't.

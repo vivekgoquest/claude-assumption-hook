@@ -27,7 +27,7 @@ Two files total. No config files, no dependencies, no external packages.
 
 ### Detection Mode
 
-**Strict mode** — flag ANY hedging language regardless of context. No false-positive filtering. No contextual judgment. If the word matches, it gets flagged.
+**Strict mode** — flag ANY hedging language regardless of context. No false-positive filtering. No contextual judgment. If the word matches, it gets flagged. Code blocks (fenced with triple backticks) are not excluded from scanning. This is intentional for v1; code-block exclusion may be added later if real usage shows excessive false positives from code content.
 
 Rationale: start restrictive, relax based on real usage data.
 
@@ -38,6 +38,8 @@ Rationale: start restrictive, relax based on real usage data.
 ### No Infinite Loop Handling
 
 No max-retry cap. No escape phrases. The loop runs until clean. Guardrails will be added later based on real usage patterns.
+
+Note: The Stop hook input includes a `stop_hook_active` boolean (true when Claude is already continuing from a previous block). This field is intentionally ignored in v1. Future loop-protection work should use it.
 
 ## Flow
 
@@ -141,17 +143,21 @@ to the best of my knowledge, to my knowledge
 
 ## Turn Boundary Detection
 
-The transcript JSONL contains interleaved entries:
+The transcript JSONL contains interleaved entries with `role` and `type` fields:
 
 ```jsonl
-{"type": "user", "text": "..."}
-{"type": "assistant", "text": "Let me check..."}
-{"type": "tool_use", "name": "Read", ...}
-{"type": "tool_result", ...}
-{"type": "assistant", "text": "Based on this, I think..."}
+{"role": "user", "type": "text", "content": "..."}
+{"role": "assistant", "type": "text", "content": "Let me check..."}
+{"role": "assistant", "type": "tool_use", "name": "Read", ...}
+{"role": "user", "type": "tool_result", ...}
+{"role": "assistant", "type": "text", "content": "Based on this, I think..."}
 ```
 
-The script walks backward from the end of the transcript to find the last `user` entry. Every `assistant` text entry after that boundary belongs to the current turn and gets scanned. This ensures hedging that occurs before tool calls (not just in the final message) is caught.
+Note: `tool_result` entries have `role: "user"`, so the turn boundary logic must find the last entry where `role == "user"` AND `type == "text"` — not just any `role: "user"` entry. Every `assistant` text entry after that boundary belongs to the current turn and gets scanned. This ensures hedging that occurs before tool calls (not just in the final message) is caught.
+
+Note: The Stop hook also provides a `last_assistant_message` convenience field containing only the final response text. We deliberately parse the full transcript instead, because hedging can appear in earlier assistant messages within the same turn (e.g., before tool calls).
+
+**Re-scan behavior:** Because the script scans all assistant messages in the turn (not just the latest), corrected messages from previous block iterations will also be re-scanned. Claude must avoid hedging language even when describing its correction process (e.g., "I verified that X" is fine, but "I verified what I previously assumed" would re-flag "assumed").
 
 ## Hook Reason Format
 
@@ -191,7 +197,7 @@ Do NOT simply rephrase — actually verify.
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/assumption-guard.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/assumption-guard.py",
             "timeout": 10
           }
         ]
@@ -201,47 +207,62 @@ Do NOT simply rephrase — actually verify.
 }
 ```
 
+The `$CLAUDE_PROJECT_DIR` variable ensures the script is found regardless of the shell's working directory at hook execution time. Timeout of 10s should suffice for most conversations; may need increasing for very long sessions with large transcripts.
+
 ## Script Structure (pseudocode)
 
+All regex patterns use `\b` word boundaries for single-word terms (e.g., `\blikely\b`) to prevent matching inside other words (e.g., "unlikely" is its own match, "dismay" does not match "may"). Multi-word phrases are naturally bounded by spaces.
+
+Sentence extraction: split the text on newlines first (treating each line as a unit), then flag the entire line containing the match. This avoids the complexity of sentence-boundary detection (abbreviations, code, bullet points) while giving Claude enough context to understand what to verify.
+
+Deduplication: if the same line contains multiple hedging words, it appears once in the output with all flagged words listed.
+
+Minimum Python version: 3.8+ (for walrus operator convenience, though 3.6+ would work with minor syntax changes).
+
 ```
-PATTERNS = { ... }  # All 8 categories, hardcoded
+PATTERNS = [...]  # All 8 categories, \b-bounded, hardcoded
 
 def main():
     input_data = json.load(sys.stdin)
     transcript_path = input_data["transcript_path"]
 
+    # Gracefully handle missing/empty transcript
+    if not os.path.exists(transcript_path):
+        sys.exit(0)
+
     messages = read_jsonl(transcript_path)
 
-    # Find last user message = turn boundary
-    turn_start = find_last_user_message_index(messages)
+    # Find last user TEXT message = turn boundary
+    # (tool_result entries also have role="user", so filter by type="text")
+    turn_start = find_last_index(messages, role="user", type="text")
 
     # Collect all assistant text after turn boundary
     assistant_texts = []
     for msg in messages[turn_start:]:
-        if msg is assistant text:
-            assistant_texts.append(msg.text)
+        if msg["role"] == "assistant" and msg.get("type") == "text":
+            assistant_texts.append(msg["content"])
 
     full_text = "\n".join(assistant_texts)
 
-    # Scan for hedging
-    flags = []
+    # Scan for hedging — deduplicate by line
+    flagged_lines = {}  # line_text -> set of matched words
     for pattern in PATTERNS:
         for match in re.finditer(pattern, full_text, re.IGNORECASE):
-            sentence = extract_surrounding_sentence(full_text, match)
-            flags.append((sentence, match.group()))
+            line = get_line_containing(full_text, match.start())
+            flagged_lines.setdefault(line, set()).add(match.group())
 
-    if not flags:
+    if not flagged_lines:
         sys.exit(0)
 
     # Build reason and block
-    reason = format_reason(flags)
+    reason = format_reason(flagged_lines)
     print(json.dumps({"decision": "block", "reason": reason}))
     sys.exit(0)
 ```
 
 ## Dependencies
 
-- Python 3 (stdlib only: `json`, `re`, `sys`)
+- Python 3.8+ (stdlib only: `json`, `re`, `sys`, `os`)
 - No pip packages
 - No external config files
 

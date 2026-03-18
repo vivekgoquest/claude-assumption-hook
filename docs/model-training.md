@@ -8,9 +8,12 @@ The committed runtime label set is:
 
 - `assert_unverified`
 - `recommend_unverified`
+- `capability_promise_unverified`
 - `unchecked_limitation`
+- `verification_narration`
 - `reference_language`
 - `verified_limitation`
+- `dependency_gap_grounded`
 - `describe_type`
 - `reason_conditionally`
 - `code_content`
@@ -25,16 +28,19 @@ The committed corpus lives at `training/assumption-guard-training-labeled.jsonl`
 
 Current counts from the committed v2 report:
 
-- rows: `467`
-- train/dev/test split: `334 / 67 / 66`
+- rows: `485`
+- train/dev/test split: `344 / 72 / 69`
 
 Intent counts:
 
 - `assert_unverified`: `120`
 - `recommend_unverified`: `66`
+- `capability_promise_unverified`: `6`
 - `unchecked_limitation`: `45`
+- `verification_narration`: `6`
 - `reference_language`: `61`
 - `verified_limitation`: `27`
+- `dependency_gap_grounded`: `6`
 - `describe_type`: `44`
 - `reason_conditionally`: `37`
 - `code_content`: `21`
@@ -89,7 +95,7 @@ The current checked-in v2 training path uses:
 
 Candidate families trained by `training/train_v2.py`:
 
-1. baseline: hashed TF-IDF + calibrated linear SVM
+1. baseline: hashed TF-IDF + adaptive calibrated linear SVM fallback
 2. candidate A: `sentence-transformers/all-MiniLM-L6-v2`
 3. candidate B: `microsoft/deberta-v3-small`
 
@@ -118,6 +124,15 @@ Generated artifacts:
 - `model/assumption-guard-v2-meta.json`
 - `model/assumption-guard-v2-report.json`
 
+Local overlays can be merged into the training run without changing the committed baseline corpus:
+
+```bash
+python3.11 training/train_v2.py \
+  --overlay-training-data ~/.claude/assumption-guard-state/training-overlay.jsonl \
+  --overlay-regression-cases ~/.claude/assumption-guard-state/regression-overlay.jsonl \
+  --overlay-replay-cases ~/.claude/assumption-guard-state/replay-overlay.jsonl
+```
+
 ## Selection Logic
 
 Candidate selection currently enforces:
@@ -138,17 +153,21 @@ Current selected model:
 
 From `model/assumption-guard-v2-report.json`:
 
-- regression fixture: `56 / 56`
-- replay corpus: `15 / 15`
-- held-out test confusion: `27 TP / 39 TN / 0 FP / 0 FN`
+- regression fixture: `62 / 62`
+- replay corpus: `17 / 17`
+- held-out test confusion: `27 TP / 42 TN / 0 FP / 0 FN`
+- targeted family accuracy:
+  - `verification_narration`: `1.0`
+  - `dependency_gap_grounded`: `1.0`
+  - `capability_promise_unverified`: `1.0`
 - ONNX parity max abs delta: within the configured `1e-3` bound
 - all acceptance gates: `true`
 
 Candidate summary:
 
-- baseline linear SVM: replay `1.0 / 1.0`, regression `49 / 56`
-- MiniLM-L6: replay `1.0 / 1.0`, regression `56 / 56`
-- DeBERTa-v3-small: replay `1.0 / 1.0`, regression `56 / 56`
+- baseline linear SVM: replay `0.9 / 1.0`, regression `55 / 62`
+- MiniLM-L6: replay `1.0 / 1.0`, regression `62 / 62`
+- DeBERTa-v3-small: replay `1.0 / 1.0`, regression `62 / 62`
 
 MiniLM is selected because it clears the gates and is smaller than DeBERTa.
 
@@ -159,6 +178,9 @@ The committed report evaluates:
 - `regression_full_match`
 - `replay_block_recall >= 0.95`
 - `replay_pass_recall >= 0.95`
+- `verification_narration` targeted family gate
+- `dependency_gap_grounded` targeted family gate
+- `capability_promise_unverified` targeted family gate
 - `reference_language` accuracy gate
 - `verified_limitation` accuracy gate
 - `reason_conditionally` accuracy gate

@@ -8,12 +8,15 @@ The v2 policy treats these as BLOCK:
 
 - `assert_unverified`
 - `recommend_unverified`
+- `capability_promise_unverified`
 - `unchecked_limitation`
 
 It treats these as PASS:
 
+- `verification_narration`
 - `reference_language`
 - `verified_limitation`
+- `dependency_gap_grounded`
 - `describe_type`
 - `reason_conditionally`
 - `code_content`
@@ -67,7 +70,9 @@ These skip ML entirely:
 - type/shape clauses such as `The return value could be None or a string`
 - conditional reasoning such as `If the token expires, the middleware would return 401`
 - idiomatic comparisons such as `Use map rather than forEach here`
+- explicit verification narration such as `Let me verify whether ...`
 - evidence-backed limitations and recommendations
+- grounded dependency gaps such as `I confirmed X. But without Y, I can't Z.`
 
 ### 3. Hard-Block Rules
 
@@ -87,7 +92,8 @@ Regex is stdlib-only and always available. It catches the candidate clauses that
 1. epistemic modals and approximators
 2. uncertainty intros
 3. speculative or unsupported recommendation language
-4. explicit unchecked/needs-verification language
+4. unsupported capability promises such as `I can check ... and remove ...`
+5. explicit unchecked/needs-verification language
 
 ### 5. ONNX Classifier
 
@@ -99,7 +105,7 @@ Runtime artifacts:
 - `model/assumption-guard-v2-tokenizer.json`
 - `model/assumption-guard-v2-meta.json`
 
-The classifier produces 10 intent probabilities. Runtime sums the three BLOCK-class probabilities into `p_block` and blocks when `p_block >= threshold`.
+The classifier produces 13 intent probabilities. Runtime sums the four BLOCK-class probabilities into `p_block` and blocks when `p_block >= threshold`.
 
 The current metadata threshold is `0.20`.
 
@@ -168,6 +174,30 @@ Example fallback record:
 }
 ```
 
+## Learning Queue
+
+Sprint 1 adds an always-on local learning loop around the live hook.
+
+Default local state:
+
+- `~/.claude/assumption-guard-state/learning-queue.jsonl`
+- `~/.claude/assumption-guard-state/queue/YYYY-MM-DD.jsonl`
+- `~/.claude/assumption-guard-state/training-overlay.jsonl`
+- `~/.claude/assumption-guard-state/regression-overlay.jsonl`
+- `~/.claude/assumption-guard-state/replay-overlay.jsonl`
+- `~/.claude/assumption-guard-state/reviewed-claude.jsonl`
+- `~/.claude/assumption-guard-state/current-model-report.json`
+
+The hook now queues:
+
+- blocked ONNX clauses
+- low-margin ONNX passes
+- judgement-heavy heuristic rescues
+- mixed evidence / capability-gap clauses
+- a deterministic sample of safe passes
+
+Queue rows are sanitized before they are written.
+
 ## Files
 
 Runtime:
@@ -180,8 +210,12 @@ Training and evaluation:
 - `training/assumption-guard-training-labeled.jsonl`
 - `training/assumption-guard-regression-cases.json`
 - `training/assumption-guard-replay-cases.json`
+- `training/build_review_batch.py`
 - `training/mine_transcripts_v2.py`
+- `training/promote_reviewed_examples.py`
 - `training/replay_eval_v2.py`
+- `training/review_with_claude.py`
+- `training/run_learning_cycle.py`
 - `training/train_v2.py`
 
 Generated v2 artifacts:

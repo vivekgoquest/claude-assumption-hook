@@ -14,6 +14,10 @@ HOOK_PATH = REPO_ROOT / "hook" / "assumption-guard.py"
 TRAINING_SCRIPT = REPO_ROOT / "training" / "train_v2.py"
 REPLAY_SCRIPT = REPO_ROOT / "training" / "replay_eval_v2.py"
 MINING_SCRIPT = REPO_ROOT / "training" / "mine_transcripts_v2.py"
+LEARNING_CYCLE_SCRIPT = REPO_ROOT / "training" / "run_learning_cycle.py"
+BUILD_REVIEW_BATCH_SCRIPT = REPO_ROOT / "training" / "build_review_batch.py"
+REVIEW_WITH_CLAUDE_SCRIPT = REPO_ROOT / "training" / "review_with_claude.py"
+PROMOTE_REVIEWED_SCRIPT = REPO_ROOT / "training" / "promote_reviewed_examples.py"
 MODEL_PATH = REPO_ROOT / "model" / "assumption-guard-v2.onnx"
 TOKENIZER_PATH = REPO_ROOT / "model" / "assumption-guard-v2-tokenizer.json"
 META_PATH = REPO_ROOT / "model" / "assumption-guard-v2-meta.json"
@@ -49,9 +53,12 @@ def run_hook(
     tokenizer_path=TOKENIZER_PATH,
     meta_path=META_PATH,
     import_blocker=False,
+    extra_env=None,
+    keep_tmpdir=False,
 ):
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp = Path(tmpdir)
+    temp_context = tempfile.TemporaryDirectory() if not keep_tmpdir else None
+    try:
+        tmp = Path(temp_context.name if temp_context is not None else tempfile.mkdtemp())
         transcript_path = tmp / "transcript.jsonl"
         log_path = tmp / "assumption-guard.log.jsonl"
         transcript_path.write_text(
@@ -81,6 +88,8 @@ def run_hook(
         env["ASSUMPTION_GUARD_TOKENIZER_PATH"] = str(tokenizer_path)
         env["ASSUMPTION_GUARD_META_PATH"] = str(meta_path)
         env["ASSUMPTION_GUARD_LOG_PATH"] = str(log_path)
+        if extra_env:
+            env.update(extra_env)
         if import_blocker:
             blocker = f"""
 import builtins
@@ -113,7 +122,10 @@ runpy.run_path({str(HOOK_PATH)!r}, run_name="__main__")
         log_entries = []
         if log_path.exists():
             log_entries = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
-        return result, log_entries
+        return result, log_entries, tmp
+    finally:
+        if temp_context is not None:
+            temp_context.cleanup()
 
 
 class AssumptionGuardRuntimeTests(unittest.TestCase):
@@ -139,7 +151,7 @@ class AssumptionGuardRuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(len(cases), 40)
         for case in cases:
             with self.subTest(text=case["text"]):
-                result, _ = run_hook(case["text"])
+                result, _, _ = run_hook(case["text"])
                 self.assertEqual(result.returncode, 0, result.stderr)
                 if case["expected_block"]:
                     payload = json.loads(result.stdout)
@@ -148,7 +160,7 @@ class AssumptionGuardRuntimeTests(unittest.TestCase):
                     self.assertEqual(result.stdout.strip(), "", result.stdout)
 
     def test_block_reason_includes_clause_and_predicted_intent(self):
-        result, _ = run_hook("Maybe rename this helper to be clearer")
+        result, _, _ = run_hook("Maybe rename this helper to be clearer")
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["decision"], "block")
@@ -167,21 +179,63 @@ class AssumptionGuardRuntimeTests(unittest.TestCase):
             "But if you want to revert, I can check which ones are new and remove them."
         )
 
-        result, _ = run_hook(verification_narration)
+        result, _, _ = run_hook(verification_narration)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "", result.stdout)
 
-        result, _ = run_hook(grounded_limitation)
+        result, _, _ = run_hook(grounded_limitation)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "", result.stdout)
 
-        result, _ = run_hook(unsupported_capability)
+        result, _, _ = run_hook(unsupported_capability)
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["decision"], "block")
 
+    def test_learning_queue_captures_blocked_and_heuristic_rescue_cases(self):
+        state_dir = Path(tempfile.mkdtemp())
+        queue_path = state_dir / "learning-queue.jsonl"
+        common_env = {
+            "ASSUMPTION_GUARD_STATE_DIR": str(state_dir),
+            "ASSUMPTION_GUARD_QUEUE_PATH": str(queue_path),
+        }
+
+        blocked = "But if you want to revert, I can check which ones are new and remove them."
+        rescued = "Let me verify whether I can actually identify the new videos and remove them."
+
+        result, _, _ = run_hook(blocked, extra_env=common_env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result, _, _ = run_hook(rescued, extra_env=common_env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        self.assertTrue(queue_path.exists(), "expected learning queue to be written")
+        rows = [json.loads(line) for line in queue_path.read_text().splitlines() if line.strip()]
+        reasons = {row["candidate_reason"] for row in rows}
+        self.assertIn("blocked_clause", reasons)
+        self.assertIn("heuristic_rescue", reasons)
+        for row in rows:
+            self.assertIn("candidate_hash", row)
+            self.assertIn("sanitized_text", row)
+
+    def test_disable_env_bypasses_hook_and_queue_capture(self):
+        state_dir = Path(tempfile.mkdtemp())
+        queue_path = state_dir / "learning-queue.jsonl"
+        result, log_entries, tmpdir = run_hook(
+            "Maybe rename this helper to be clearer",
+            extra_env={
+                "ASSUMPTION_GUARD_DISABLE": "1",
+                "ASSUMPTION_GUARD_STATE_DIR": str(state_dir),
+                "ASSUMPTION_GUARD_QUEUE_PATH": str(queue_path),
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "")
+        self.assertEqual(log_entries, [])
+        self.assertFalse(queue_path.exists())
+        self.assertFalse((tmpdir / "assumption-guard.log.jsonl").exists())
+
     def test_missing_onnx_dependencies_fall_back_to_regex_only(self):
-        result, log_entries = run_hook(
+        result, log_entries, _ = run_hook(
             "I think the timeout is 30 seconds",
             import_blocker=True,
         )
@@ -204,7 +258,7 @@ class AssumptionGuardRuntimeTests(unittest.TestCase):
             corrupt_model.write_text("not an onnx model")
             corrupt_tokenizer.write_text("{\"version\":\"1.0\"}")
             corrupt_meta.write_text("{\"threshold\":0.5,\"labels\":[\"assert_unverified\"]}")
-            result, log_entries = run_hook(
+            result, log_entries, _ = run_hook(
                 "I think the timeout is 30 seconds",
                 model_path=corrupt_model,
                 tokenizer_path=corrupt_tokenizer,
@@ -226,6 +280,10 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
         self.assertTrue(MINING_SCRIPT.exists())
         self.assertTrue(TRAINING_SCRIPT.exists())
         self.assertTrue(REPLAY_SCRIPT.exists())
+        self.assertTrue(LEARNING_CYCLE_SCRIPT.exists())
+        self.assertTrue(BUILD_REVIEW_BATCH_SCRIPT.exists())
+        self.assertTrue(REVIEW_WITH_CLAUDE_SCRIPT.exists())
+        self.assertTrue(PROMOTE_REVIEWED_SCRIPT.exists())
 
     def test_repo_only_keeps_single_runtime_and_v2_artifacts(self):
         self.assertFalse(LEGACY_RUNTIME_PATH.exists())
@@ -261,6 +319,228 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             replay = json.loads(output_path.read_text())
             self.assertEqual(replay["summary"]["matched"], replay["summary"]["total"])
+
+    def test_build_review_batch_merges_and_dedupes_queue_and_mined_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            queue_path = tmp / "queue.jsonl"
+            mined_path = tmp / "mined.jsonl"
+            output_path = tmp / "review.jsonl"
+            queue_rows = [
+                {
+                    "candidate_id": "q-1",
+                    "sanitized_text": "Let me verify whether I can actually identify the new videos and remove them.",
+                    "candidate_reason": "heuristic_rescue",
+                    "intent": "verification_narration",
+                    "decision": "pass",
+                    "review_status": "needs_review",
+                }
+            ]
+            mined_rows = [
+                {
+                    "id": "m-1",
+                    "text": "Let me verify whether I can actually identify the new videos and remove them.",
+                    "block": False,
+                    "intent": "verification_narration",
+                    "source_type": "transcript",
+                    "source_hash": "abc123",
+                    "evidence_present": False,
+                    "quoted_or_code": False,
+                    "review_status": "needs_review",
+                    "notes": "mined",
+                },
+                {
+                    "id": "m-2",
+                    "text": "But if you want to revert, I can check which ones are new and remove them.",
+                    "block": True,
+                    "intent": "capability_promise_unverified",
+                    "source_type": "transcript",
+                    "source_hash": "def456",
+                    "evidence_present": False,
+                    "quoted_or_code": False,
+                    "review_status": "needs_review",
+                    "notes": "mined",
+                },
+            ]
+            queue_path.write_text("\n".join(json.dumps(row) for row in queue_rows) + "\n")
+            mined_path.write_text("\n".join(json.dumps(row) for row in mined_rows) + "\n")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(BUILD_REVIEW_BATCH_SCRIPT),
+                    "--queue",
+                    str(queue_path),
+                    "--mined",
+                    str(mined_path),
+                    "--output",
+                    str(output_path),
+                ],
+                capture_output=True,
+                text=True,
+                cwd=REPO_ROOT,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            rows = [json.loads(line) for line in output_path.read_text().splitlines() if line.strip()]
+            self.assertEqual(len(rows), 2)
+            texts = {row["text"] for row in rows}
+            self.assertIn("Let me verify whether I can actually identify the new videos and remove them.", texts)
+            self.assertIn("But if you want to revert, I can check which ones are new and remove them.", texts)
+
+    def test_promote_reviewed_examples_routes_rows_to_overlays(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            reviewed_path = tmp / "reviewed.jsonl"
+            training_overlay = tmp / "training-overlay.jsonl"
+            regression_overlay = tmp / "regression-overlay.jsonl"
+            replay_overlay = tmp / "replay-overlay.jsonl"
+            reviewed_rows = [
+                {
+                    "candidate_id": "r-1",
+                    "text": "Let me verify whether I can actually identify the new videos and remove them.",
+                    "final_intent": "verification_narration",
+                    "final_block": False,
+                    "confidence": 0.92,
+                    "pattern_family": "verification_narration",
+                    "candidate_reason": "heuristic_rescue",
+                },
+                {
+                    "candidate_id": "r-2",
+                    "text": "But if you want to revert, I can check which ones are new and remove them.",
+                    "final_intent": "capability_promise_unverified",
+                    "final_block": True,
+                    "confidence": 0.95,
+                    "pattern_family": "capability_promise_unverified",
+                    "candidate_reason": "blocked_clause",
+                },
+                {
+                    "candidate_id": "r-3",
+                    "text": "I confirmed DELETE /videos/bulk exists and requires ids. But without a saved list of the newly created ids, I can't selectively remove them.",
+                    "final_intent": "dependency_gap_grounded",
+                    "final_block": False,
+                    "confidence": 0.72,
+                    "pattern_family": "dependency_gap_grounded",
+                    "candidate_reason": "mixed_evidence_gap",
+                },
+            ]
+            reviewed_path.write_text("\n".join(json.dumps(row) for row in reviewed_rows) + "\n")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(PROMOTE_REVIEWED_SCRIPT),
+                    "--reviewed",
+                    str(reviewed_path),
+                    "--training-overlay",
+                    str(training_overlay),
+                    "--regression-overlay",
+                    str(regression_overlay),
+                    "--replay-overlay",
+                    str(replay_overlay),
+                ],
+                capture_output=True,
+                text=True,
+                cwd=REPO_ROOT,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            training_rows = [json.loads(line) for line in training_overlay.read_text().splitlines() if line.strip()]
+            regression_rows = [json.loads(line) for line in regression_overlay.read_text().splitlines() if line.strip()]
+            replay_rows = [json.loads(line) for line in replay_overlay.read_text().splitlines() if line.strip()]
+            self.assertEqual(len(training_rows), 3)
+            self.assertGreaterEqual(len(regression_rows), 2)
+            self.assertGreaterEqual(len(replay_rows), 1)
+
+    def test_learning_cycle_reviews_and_promotes_without_retraining(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_dir = tmp / "state"
+            transcript_root = tmp / "projects"
+            transcript_root.mkdir(parents=True)
+            queue_path = state_dir / "learning-queue.jsonl"
+            log_path = tmp / "assumption-guard.log.jsonl"
+            reviewer_script = tmp / "fake_claude.py"
+            reviewer_script.write_text(
+                "\n".join(
+                    [
+                        "import json, sys",
+                        "payload = [",
+                        "  {",
+                        '    "candidate_id": "candidate-a",',
+                        '    "final_intent": "verification_narration",',
+                        '    "final_block": False,',
+                        '    "confidence": 0.93,',
+                        '    "rationale": "explicit verification narration",',
+                        '    "pattern_family": "verification_narration"',
+                        "  },",
+                        "  {",
+                        '    "candidate_id": "candidate-b",',
+                        '    "final_intent": "capability_promise_unverified",',
+                        '    "final_block": True,',
+                        '    "confidence": 0.95,',
+                        '    "rationale": "unsupported capability promise",',
+                        '    "pattern_family": "capability_promise_unverified"',
+                        "  }",
+                        "]",
+                        "print(json.dumps(payload))",
+                    ]
+                )
+            )
+            queue_rows = [
+                {
+                    "candidate_id": "candidate-a",
+                    "candidate_hash": "hash-a",
+                    "sanitized_text": "Let me verify whether I can actually identify the new videos and remove them.",
+                    "text": "Let me verify whether I can actually identify the new videos and remove them.",
+                    "decision": "pass",
+                    "intent": "verification_narration",
+                    "candidate_reason": "blocked_clause",
+                    "evidence_present": False,
+                    "quoted_or_code": False,
+                },
+                {
+                    "candidate_id": "candidate-b",
+                    "candidate_hash": "hash-b",
+                    "sanitized_text": "But if you want to revert, I can check which ones are new and remove them.",
+                    "text": "But if you want to revert, I can check which ones are new and remove them.",
+                    "decision": "block",
+                    "intent": "capability_promise_unverified",
+                    "candidate_reason": "blocked_clause",
+                    "evidence_present": False,
+                    "quoted_or_code": False,
+                },
+            ]
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            queue_path.write_text("\n".join(json.dumps(row) for row in queue_rows) + "\n")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(LEARNING_CYCLE_SCRIPT),
+                    "--state-dir",
+                    str(state_dir),
+                    "--queue-path",
+                    str(queue_path),
+                    "--log-path",
+                    str(log_path),
+                    "--transcript-root",
+                    str(transcript_root),
+                    "--min-review-batch",
+                    "1",
+                    "--claude-cmd",
+                    f"{sys.executable} {reviewer_script}",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=REPO_ROOT,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "captured")
+            self.assertFalse(payload["retrain"])
+            training_overlay = [json.loads(line) for line in (state_dir / "training-overlay.jsonl").read_text().splitlines() if line.strip()]
+            self.assertEqual(len(training_overlay), 2)
+            reviewed_rows = [json.loads(line) for line in (state_dir / "reviewed-claude.jsonl").read_text().splitlines() if line.strip()]
+            self.assertEqual(len(reviewed_rows), 2)
 
     def test_committed_report_meets_acceptance_gates(self):
         report = json.loads(REPORT_PATH.read_text())

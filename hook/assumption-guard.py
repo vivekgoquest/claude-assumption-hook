@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
+import random
 import re
 import sys
 from datetime import datetime, timezone
@@ -15,16 +17,24 @@ from typing import Dict, List, Optional, Sequence
 LABELS: List[str] = [
     "assert_unverified",
     "recommend_unverified",
+    "capability_promise_unverified",
     "unchecked_limitation",
+    "verification_narration",
     "reference_language",
     "verified_limitation",
+    "dependency_gap_grounded",
     "describe_type",
     "reason_conditionally",
     "code_content",
     "idiomatic_compare",
     "recommend_supported",
 ]
-BLOCK_LABELS = {"assert_unverified", "recommend_unverified", "unchecked_limitation"}
+BLOCK_LABELS = {
+    "assert_unverified",
+    "recommend_unverified",
+    "capability_promise_unverified",
+    "unchecked_limitation",
+}
 
 FENCED_CODE = re.compile(r"```.*?```", re.DOTALL)
 INLINE_CODE = re.compile(r"`[^`]+`")
@@ -127,8 +137,24 @@ ARCHITECTURE_NOUNS = re.compile(
     re.IGNORECASE,
 )
 DIRECTIVE_START = re.compile(r"^\s*(use|prefer|return|reuse|deploy|consider|store)\b", re.IGNORECASE)
+CAPABILITY_PROMISE_PATTERN = re.compile(
+    r"\b(?:if you want,?\s+)?i can\s+"
+    r"(check|identify|remove|revert|delete|fix|confirm|determine|find|undo|verify|figure out|work out)\b",
+    re.IGNORECASE,
+)
+UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE)
+HEX_RE = re.compile(r"\b[0-9a-f]{16,}\b", re.IGNORECASE)
+EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
+URL_RE = re.compile(r"https?://\S+")
+PATH_RE = re.compile(r"(?<![A-Za-z0-9_])(?:/[\w .:+@-]+)+")
+LONG_NUMBER_RE = re.compile(r"\b\d{5,}\b")
+CHANNEL_ID_RE = re.compile(r"\bUC[a-zA-Z0-9_-]{10,}\b")
 
 CLAUDE_DIR = os.path.join(os.path.expanduser("~"), ".claude")
+STATE_DIR = os.environ.get(
+    "ASSUMPTION_GUARD_STATE_DIR",
+    os.path.join(CLAUDE_DIR, "assumption-guard-state"),
+)
 MODEL_PATH = os.environ.get(
     "ASSUMPTION_GUARD_MODEL_PATH",
     os.path.join(CLAUDE_DIR, "assumption-guard-v2.onnx"),
@@ -145,6 +171,19 @@ LOG_PATH = os.environ.get(
     "ASSUMPTION_GUARD_LOG_PATH",
     os.path.join(CLAUDE_DIR, "assumption-guard.log.jsonl"),
 )
+QUEUE_PATH = os.environ.get(
+    "ASSUMPTION_GUARD_QUEUE_PATH",
+    os.path.join(STATE_DIR, "learning-queue.jsonl"),
+)
+CAPTURE_MODE = os.environ.get("ASSUMPTION_GUARD_CAPTURE_MODE", "learning")
+LOW_MARGIN = float(os.environ.get("ASSUMPTION_GUARD_LOW_MARGIN", "0.08"))
+DISABLE_HOOK = os.environ.get("ASSUMPTION_GUARD_DISABLE") == "1"
+JUDGEMENT_PASS_LABELS = {
+    "verification_narration",
+    "verified_limitation",
+    "dependency_gap_grounded",
+    "recommend_supported",
+}
 
 _CLASSIFIER = None
 _CLASSIFIER_STATUS = None
@@ -167,6 +206,38 @@ class ClauseDecision:
         self.source = source
         self.p_block = p_block
         self.matched_terms = matched_terms
+
+
+class ClauseObservation:
+    def __init__(
+        self,
+        clause: str,
+        previous_clause: Optional[str],
+        next_clause: Optional[str],
+        blocked: bool,
+        intent: str,
+        source: str,
+        p_block: Optional[float] = None,
+        matched_terms: Optional[List[str]] = None,
+        evidence_present: bool = False,
+        quoted_or_code: bool = False,
+        heuristic_rescue: bool = False,
+        mixed_evidence_gap: bool = False,
+        considered: bool = True,
+    ):
+        self.clause = clause
+        self.previous_clause = previous_clause
+        self.next_clause = next_clause
+        self.blocked = blocked
+        self.intent = intent
+        self.source = source
+        self.p_block = p_block
+        self.matched_terms = matched_terms or []
+        self.evidence_present = evidence_present
+        self.quoted_or_code = quoted_or_code
+        self.heuristic_rescue = heuristic_rescue
+        self.mixed_evidence_gap = mixed_evidence_gap
+        self.considered = considered
 
 
 class OnnxIntentClassifier:
@@ -246,6 +317,99 @@ def runtime_status(ml_available, fallback_reason=None, error_stage=None, error_d
         "error_stage": error_stage,
         "error_detail": error_detail,
     }
+
+
+def stable_sha1(value: str) -> str:
+    return hashlib.sha1(value.encode("utf-8")).hexdigest()
+
+
+def sanitize_learning_text(text: str) -> str:
+    text = URL_RE.sub("<URL>", text)
+    text = EMAIL_RE.sub("<EMAIL>", text)
+    text = UUID_RE.sub("<UUID>", text)
+    text = CHANNEL_ID_RE.sub("<CHANNEL_ID>", text)
+    text = HEX_RE.sub("<HEX>", text)
+    text = PATH_RE.sub("<PATH>", text)
+    text = LONG_NUMBER_RE.sub("<NUM>", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def daily_queue_path(queue_path: str) -> str:
+    queue_root = os.path.join(os.path.dirname(queue_path), "queue")
+    return os.path.join(queue_root, f"{datetime.now(timezone.utc).date().isoformat()}.jsonl")
+
+
+def candidate_hash_for(sanitized_text: str, previous_clause: str, next_clause: str) -> str:
+    return stable_sha1(f"{sanitized_text}\n{previous_clause}\n{next_clause}")
+
+
+def deterministic_sample(candidate_hash: str, ratio: float = 0.02) -> bool:
+    sample_value = int(candidate_hash[:8], 16) / 0xFFFFFFFF
+    return sample_value < ratio
+
+
+def quoted_or_code_clause(clause: str) -> bool:
+    stripped = clause.strip()
+    return bool(stripped.startswith("```") or COMMENT_LINE.match(stripped) or INLINE_CODE.search(stripped))
+
+
+def serialize_observation(observation: ClauseObservation, threshold: Optional[float], session_id: str, cwd: str):
+    sanitized_text = sanitize_learning_text(observation.clause)
+    sanitized_previous = sanitize_learning_text(observation.previous_clause or "")
+    sanitized_next = sanitize_learning_text(observation.next_clause or "")
+    candidate_hash = candidate_hash_for(sanitized_text, sanitized_previous, sanitized_next)
+    project = os.path.basename(cwd) if cwd else ""
+    return {
+        "candidate_id": f"candidate-{candidate_hash[:16]}",
+        "candidate_hash": candidate_hash,
+        "text": sanitized_text,
+        "sanitized_text": sanitized_text,
+        "previous_clause": sanitized_previous,
+        "next_clause": sanitized_next,
+        "decision": "block" if observation.blocked else "pass",
+        "intent": observation.intent,
+        "source": observation.source,
+        "p_block": observation.p_block,
+        "threshold": threshold,
+        "stage": "capture",
+        "matched_terms": observation.matched_terms,
+        "evidence_present": observation.evidence_present,
+        "quoted_or_code": observation.quoted_or_code,
+        "review_status": "needs_review",
+        "session_hash": stable_sha1(session_id or "unknown-session")[:16],
+        "message_hash": stable_sha1(f"{project}:{sanitized_text}")[:16],
+        "project": project,
+    }
+
+
+def append_learning_candidates(rows: Sequence[dict]):
+    if CAPTURE_MODE == "off" or not rows:
+        return
+    try:
+        queue_path = QUEUE_PATH
+        seen_path = os.path.join(os.path.dirname(queue_path), "seen-candidate-hashes.txt")
+        day_path = daily_queue_path(queue_path)
+        os.makedirs(os.path.dirname(queue_path), exist_ok=True)
+        os.makedirs(os.path.dirname(day_path), exist_ok=True)
+        seen_hashes = set()
+        if os.path.exists(seen_path):
+            with open(seen_path, "r", encoding="utf-8") as handle:
+                seen_hashes = {line.strip() for line in handle if line.strip()}
+
+        new_rows = [row for row in rows if row["candidate_hash"] not in seen_hashes]
+        if not new_rows:
+            return
+
+        with open(queue_path, "a", encoding="utf-8") as merged, open(day_path, "a", encoding="utf-8") as daily, open(
+            seen_path, "a", encoding="utf-8"
+        ) as seen_handle:
+            for row in new_rows:
+                payload = json.dumps(row, default=str)
+                merged.write(payload + "\n")
+                daily.write(payload + "\n")
+                seen_handle.write(row["candidate_hash"] + "\n")
+    except OSError:
+        return
 
 
 def get_classifier():
@@ -345,7 +509,7 @@ def hard_pass_intent(clause: str, previous_had_evidence: bool = False) -> Option
     if stripped.startswith("```") or COMMENT_LINE.match(stripped):
         return "code_content"
     if VERIFICATION_NARRATION.match(stripped):
-        return "reference_language"
+        return "verification_narration"
     if META_REPORT_PATTERN.search(lowered):
         return "reference_language"
     if lowered.startswith("the hook flagged ") or lowered.startswith("the hook blocked "):
@@ -396,9 +560,9 @@ def hard_pass_intent(clause: str, previous_had_evidence: bool = False) -> Option
     if EVIDENCE_PATTERN.search(stripped) and (
         LIMITATION_PATTERN.search(stripped) or DEPENDENCY_GAP_LIMITATION.search(stripped)
     ):
-        return "verified_limitation"
+        return "dependency_gap_grounded" if DEPENDENCY_GAP_LIMITATION.search(stripped) else "verified_limitation"
     if previous_had_evidence and DEPENDENCY_GAP_LIMITATION.search(stripped):
-        return "verified_limitation"
+        return "dependency_gap_grounded"
     if EVIDENCE_PATTERN.search(stripped) and RECOMMENDATION_HINT.search(stripped):
         return "recommend_supported"
     outside_literals = strip_inline_literals(stripped)
@@ -423,7 +587,9 @@ def hard_block_decision(clause: str) -> Optional[ClauseDecision]:
 
 def should_consider_clause(clause: str) -> bool:
     cleaned = strip_inline_literals(clause)
-    return any(pattern.search(cleaned) for pattern in PREFILTER_PATTERNS)
+    return any(pattern.search(cleaned) for pattern in PREFILTER_PATTERNS) or bool(
+        CAPABILITY_PROMISE_PATTERN.search(cleaned)
+    )
 
 
 def _contains_risky_marker(text: str) -> bool:
@@ -431,6 +597,8 @@ def _contains_risky_marker(text: str) -> bool:
 
 
 def regex_only_intent(clause: str, previous_clause: Optional[str] = None) -> str:
+    if CAPABILITY_PROMISE_PATTERN.search(clause):
+        return "capability_promise_unverified"
     if RECOMMENDATION_HINT.search(clause):
         if previous_clause and EVIDENCE_PATTERN.search(previous_clause):
             return "recommend_supported"
@@ -451,28 +619,85 @@ def softmax(logits: Sequence[float]) -> List[float]:
     return [value / total for value in exps]
 
 
-def evaluate_text(text: str, classifier: Optional[OnnxIntentClassifier] = None) -> List[ClauseDecision]:
+def evaluate_text_with_trace(
+    text: str,
+    classifier: Optional[OnnxIntentClassifier] = None,
+) -> tuple[List[ClauseDecision], List[ClauseObservation]]:
     decisions: List[ClauseDecision] = []
+    observations: List[ClauseObservation] = []
+    clauses = split_text_to_clauses(text)
     previous_clause = None
     previous_had_evidence = False
-    for clause in split_text_to_clauses(text):
+    for index, clause in enumerate(clauses):
+        next_clause = clauses[index + 1] if index + 1 < len(clauses) else None
+        evidence_present = bool(EVIDENCE_PATTERN.search(clause))
+        mixed_evidence_gap = bool(previous_had_evidence and DEPENDENCY_GAP_LIMITATION.search(clause))
+        common_kwargs = {
+            "clause": clause,
+            "previous_clause": previous_clause,
+            "next_clause": next_clause,
+            "evidence_present": evidence_present,
+            "quoted_or_code": quoted_or_code_clause(clause),
+            "mixed_evidence_gap": mixed_evidence_gap,
+        }
         if previous_had_evidence and RECOMMENDATION_HINT.search(clause):
+            observations.append(
+                ClauseObservation(
+                    blocked=False,
+                    intent="recommend_supported",
+                    source="carry_forward",
+                    heuristic_rescue=True,
+                    considered=True,
+                    **common_kwargs,
+                )
+            )
             previous_clause = clause
             previous_had_evidence = False
             continue
         hard_pass = hard_pass_intent(clause, previous_had_evidence=previous_had_evidence)
         if hard_pass:
-            previous_had_evidence = bool(EVIDENCE_PATTERN.search(clause))
+            observations.append(
+                ClauseObservation(
+                    blocked=False,
+                    intent=hard_pass,
+                    source="hard_pass",
+                    heuristic_rescue=hard_pass in JUDGEMENT_PASS_LABELS,
+                    considered=True,
+                    **common_kwargs,
+                )
+            )
+            previous_had_evidence = evidence_present
             previous_clause = clause
             continue
         hard_block = hard_block_decision(clause)
         if hard_block:
             decisions.append(hard_block)
-            previous_had_evidence = bool(EVIDENCE_PATTERN.search(clause))
+            observations.append(
+                ClauseObservation(
+                    blocked=True,
+                    intent=hard_block.intent,
+                    source=hard_block.source,
+                    matched_terms=hard_block.matched_terms,
+                    p_block=hard_block.p_block,
+                    considered=True,
+                    **common_kwargs,
+                )
+            )
+            previous_had_evidence = evidence_present
             previous_clause = clause
             continue
         if not should_consider_clause(clause):
-            previous_had_evidence = bool(EVIDENCE_PATTERN.search(clause))
+            observations.append(
+                ClauseObservation(
+                    blocked=False,
+                    intent=hard_pass_intent(clause, previous_had_evidence=previous_had_evidence)
+                    or "reference_language",
+                    source="ignored",
+                    considered=False,
+                    **common_kwargs,
+                )
+            )
+            previous_had_evidence = evidence_present
             previous_clause = clause
             continue
         if classifier is None:
@@ -481,18 +706,36 @@ def evaluate_text(text: str, classifier: Optional[OnnxIntentClassifier] = None) 
                 previous_clause=previous_clause if previous_had_evidence else None,
             )
             if intent in {"recommend_supported", "verified_limitation"}:
-                previous_had_evidence = bool(EVIDENCE_PATTERN.search(clause))
+                observations.append(
+                    ClauseObservation(
+                        blocked=False,
+                        intent=intent,
+                        source="regex_only",
+                        heuristic_rescue=intent in JUDGEMENT_PASS_LABELS,
+                        considered=True,
+                        **common_kwargs,
+                    )
+                )
+                previous_had_evidence = evidence_present
                 previous_clause = clause
                 continue
-            decisions.append(
-                ClauseDecision(
-                    clause=clause,
+            decision = ClauseDecision(
+                clause=clause,
+                blocked=True,
+                intent=intent,
+                source="regex_only",
+            )
+            decisions.append(decision)
+            observations.append(
+                ClauseObservation(
                     blocked=True,
                     intent=intent,
                     source="regex_only",
+                    considered=True,
+                    **common_kwargs,
                 )
             )
-            previous_had_evidence = bool(EVIDENCE_PATTERN.search(clause))
+            previous_had_evidence = evidence_present
             previous_clause = clause
             continue
         prediction = classifier.predict(clause)
@@ -504,8 +747,23 @@ def evaluate_text(text: str, classifier: Optional[OnnxIntentClassifier] = None) 
             if heuristic_intent in BLOCK_LABELS:
                 prediction.intent = heuristic_intent
             decisions.append(prediction)
-        previous_had_evidence = bool(EVIDENCE_PATTERN.search(clause))
+        observations.append(
+            ClauseObservation(
+                blocked=prediction.blocked,
+                intent=prediction.intent,
+                source=prediction.source,
+                p_block=prediction.p_block,
+                considered=True,
+                **common_kwargs,
+            )
+        )
+        previous_had_evidence = evidence_present
         previous_clause = clause
+    return decisions, observations
+
+
+def evaluate_text(text: str, classifier: Optional[OnnxIntentClassifier] = None) -> List[ClauseDecision]:
+    decisions, _ = evaluate_text_with_trace(text, classifier)
     return decisions
 
 
@@ -599,7 +857,46 @@ def log_event(event):
         pass
 
 
+def candidate_reason_for(observation: ClauseObservation, threshold: Optional[float]) -> Optional[str]:
+    if observation.blocked:
+        return "blocked_clause"
+    if observation.heuristic_rescue:
+        return "heuristic_rescue"
+    if observation.mixed_evidence_gap:
+        return "mixed_evidence_gap"
+    if threshold is not None and observation.p_block is not None and abs(observation.p_block - threshold) <= LOW_MARGIN:
+        return "low_margin_pass"
+
+    sanitized_text = sanitize_learning_text(observation.clause)
+    sanitized_previous = sanitize_learning_text(observation.previous_clause or "")
+    sanitized_next = sanitize_learning_text(observation.next_clause or "")
+    if deterministic_sample(candidate_hash_for(sanitized_text, sanitized_previous, sanitized_next), 0.02):
+        return "sampled_pass"
+    return None
+
+
+def capture_learning_candidates(
+    observations: Sequence[ClauseObservation],
+    threshold: Optional[float],
+    session_id: str,
+    cwd: str,
+):
+    if CAPTURE_MODE == "off":
+        return
+    candidate_rows = []
+    for observation in observations:
+        reason = candidate_reason_for(observation, threshold)
+        if reason is None:
+            continue
+        row = serialize_observation(observation, threshold, session_id, cwd)
+        row["candidate_reason"] = reason
+        candidate_rows.append(row)
+    append_learning_candidates(candidate_rows)
+
+
 def main():
+    if DISABLE_HOOK:
+        sys.exit(0)
     try:
         input_data = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError):
@@ -625,7 +922,7 @@ def main():
 
         full_text = "\n".join(assistant_texts)
         classifier, status = get_classifier()
-        decisions = evaluate_text(full_text, classifier if status["ml_available"] else None)
+        decisions, observations = evaluate_text_with_trace(full_text, classifier if status["ml_available"] else None)
         stage = "onnx" if status["ml_available"] else "regex_only"
         backend_name = "onnx" if status["ml_available"] else "regex"
         threshold = classifier.meta.get("threshold") if classifier is not None else None
@@ -660,6 +957,7 @@ def main():
                 "threshold": threshold,
             }
         )
+        capture_learning_candidates(observations, threshold, session_id, cwd)
 
         if not decisions:
             sys.exit(0)

@@ -3,9 +3,12 @@
   "labels": [
     "assert_unverified",
     "recommend_unverified",
+    "capability_promise_unverified",
     "unchecked_limitation",
+    "verification_narration",
     "reference_language",
     "verified_limitation",
+    "dependency_gap_grounded",
     "describe_type",
     "reason_conditionally",
     "code_content",
@@ -14,6 +17,7 @@
   ],
   "block_labels": [
     "assert_unverified",
+    "capability_promise_unverified",
     "recommend_unverified",
     "unchecked_limitation"
   ],

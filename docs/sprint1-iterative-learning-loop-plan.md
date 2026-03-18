@@ -2,6 +2,7 @@
 
 **Generated**: 2026-03-18
 **Estimated Complexity**: High
+**Status**: Historical planning doc. Sprint 1 is now implemented; use `README.md` and `docs/assumption-guard-system.md` for the current runtime, state-dir, and auto-promotion details.
 
 ## Overview
 

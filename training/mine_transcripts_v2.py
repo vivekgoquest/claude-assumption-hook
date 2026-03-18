@@ -27,15 +27,6 @@ def load_runtime_module():
 v2 = load_runtime_module()
 
 
-UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE)
-HEX_RE = re.compile(r"\b[0-9a-f]{16,}\b", re.IGNORECASE)
-EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
-URL_RE = re.compile(r"https?://\S+")
-PATH_RE = re.compile(r"(?<![A-Za-z0-9_])(?:/[\w .:+@-]+)+")
-LONG_NUMBER_RE = re.compile(r"\b\d{5,}\b")
-CHANNEL_ID_RE = re.compile(r"\bUC[a-zA-Z0-9_-]{10,}\b")
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -92,14 +83,7 @@ def extract_assistant_text(entry):
 
 
 def sanitize_text(text: str) -> str:
-    text = URL_RE.sub("<URL>", text)
-    text = EMAIL_RE.sub("<EMAIL>", text)
-    text = UUID_RE.sub("<UUID>", text)
-    text = CHANNEL_ID_RE.sub("<CHANNEL_ID>", text)
-    text = HEX_RE.sub("<HEX>", text)
-    text = PATH_RE.sub("<PATH>", text)
-    text = LONG_NUMBER_RE.sub("<NUM>", text)
-    return re.sub(r"\s+", " ", text).strip()
+    return v2.sanitize_learning_text(text)
 
 
 def weak_label_for_clause(clause: str):
@@ -115,6 +99,8 @@ def weak_label_for_clause(clause: str):
     hard_block = v2.hard_block_decision(clause)
     if hard_block:
         return hard_block.intent, True
+    if v2.CAPABILITY_PROMISE_PATTERN.search(clause):
+        return "capability_promise_unverified", True
     if v2.should_consider_clause(clause):
         return v2.regex_only_intent(clause), True
     return None, False

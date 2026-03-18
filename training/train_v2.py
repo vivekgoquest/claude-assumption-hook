@@ -27,6 +27,7 @@ import torch
 from onnxruntime.quantization import QuantType, quantize_dynamic
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.feature_extraction.text import HashingVectorizer, TfidfTransformer
+from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.svm import LinearSVC
 from torch.utils.data import DataLoader, Dataset
@@ -95,8 +96,11 @@ class TextDataset(Dataset):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--training-data", default=str(DEFAULT_DATASET))
+    parser.add_argument("--overlay-training-data", action="append", default=[])
     parser.add_argument("--regression-cases", default=str(DEFAULT_REGRESSION))
+    parser.add_argument("--overlay-regression-cases", action="append", default=[])
     parser.add_argument("--replay-cases", default=str(DEFAULT_REPLAY))
+    parser.add_argument("--overlay-replay-cases", action="append", default=[])
     parser.add_argument("--output-model", default=str(DEFAULT_MODEL))
     parser.add_argument("--output-tokenizer", default=str(DEFAULT_TOKENIZER))
     parser.add_argument("--output-meta", default=str(DEFAULT_META))
@@ -148,6 +152,8 @@ def upgrade_row(row: dict, index: int) -> dict:
 
 def load_rows(path: Path) -> List[dict]:
     rows = []
+    if not path.exists():
+        return rows
     with path.open("r", encoding="utf-8") as handle:
         for index, line in enumerate(handle):
             line = line.strip()
@@ -158,7 +164,32 @@ def load_rows(path: Path) -> List[dict]:
 
 
 def load_cases(path: Path) -> List[dict]:
-    return json.loads(path.read_text())
+    if not path.exists():
+        return []
+    raw = path.read_text().strip()
+    if not raw:
+        return []
+    if raw.startswith("["):
+        return json.loads(raw)
+    return [json.loads(line) for line in raw.splitlines() if line.strip()]
+
+
+def merge_rows(*row_sets: Sequence[dict]) -> List[dict]:
+    merged = {}
+    for rows in row_sets:
+        for row in rows:
+            key = row["id"]
+            merged[key] = row
+    return list(merged.values())
+
+
+def merge_cases(*case_sets: Sequence[dict]) -> List[dict]:
+    merged = {}
+    for rows in case_sets:
+        for row in rows:
+            key = stable_hash(f"{row.get('group', '')}:{row['text']}:{row['expected_block']}")
+            merged[key] = row
+    return list(merged.values())
 
 
 def split_rows(rows: Sequence[dict]) -> SplitData:
@@ -312,7 +343,7 @@ def runtime_decision_for_text(text: str, predict_fn, threshold: float) -> dict:
             previous_had_evidence = False
             continue
 
-        hard_pass = v2.hard_pass_intent(clause)
+        hard_pass = v2.hard_pass_intent(clause, previous_had_evidence=previous_had_evidence)
         if hard_pass:
             observed_intent = observed_intent or hard_pass
             previous_had_evidence = bool(v2.EVIDENCE_PATTERN.search(clause))
@@ -364,19 +395,25 @@ def runtime_decision_for_text(text: str, predict_fn, threshold: float) -> dict:
     }
 
 
-def baseline_pipeline():
+def baseline_pipeline(min_class_count: int):
+    if min_class_count < 2:
+        classifier = LogisticRegression(
+            max_iter=2000,
+            class_weight="balanced",
+            multi_class="auto",
+            random_state=42,
+        )
+    else:
+        classifier = CalibratedClassifierCV(
+            estimator=LinearSVC(C=1.0, class_weight="balanced", dual=False, random_state=42),
+            cv=min(3, min_class_count),
+            method="sigmoid",
+        )
     return Pipeline(
         [
             ("hash", HashingVectorizer(ngram_range=(1, 3), n_features=2**18, alternate_sign=False)),
             ("tfidf", TfidfTransformer()),
-            (
-                "clf",
-                CalibratedClassifierCV(
-                    estimator=LinearSVC(C=1.0, class_weight="balanced", dual=False, random_state=42),
-                    cv=3,
-                    method="sigmoid",
-                ),
-            ),
+            ("clf", classifier),
         ]
     )
 
@@ -386,9 +423,13 @@ def p_block_from_probabilities(probabilities: Sequence[float]) -> float:
 
 
 def run_baseline_candidate(rows: SplitData, regression_cases: Sequence[dict], replay_cases: Sequence[dict]):
-    pipe = baseline_pipeline()
-    train_texts = [row["text"] for row in rows.train]
     train_labels = [row["intent"] for row in rows.train]
+    min_class_count = min(
+        (train_labels.count(label) for label in set(train_labels)),
+        default=0,
+    )
+    pipe = baseline_pipeline(min_class_count)
+    train_texts = [row["text"] for row in rows.train]
     pipe.fit(train_texts, train_labels)
 
     def predict_fn(texts):
@@ -619,6 +660,14 @@ def evaluate_candidate(
         [case["expected_block"] for case in replay_cases],
         [row["blocked"] for row in replay_rows],
     )
+    targeted_family_accuracy = {}
+    for family in ["verification_narration", "dependency_gap_grounded", "capability_promise_unverified"]:
+        family_rows = [row for row in replay_rows if row["group"] == family]
+        targeted_family_accuracy[family] = (
+            sum(1 for row in family_rows if row["matched"]) / len(family_rows)
+            if family_rows
+            else 1.0
+        )
 
     low_margin = []
     for row, result in zip(rows.test, test_results):
@@ -660,6 +709,7 @@ def evaluate_candidate(
             "matched": sum(1 for row in replay_rows if row["matched"]),
             "total": len(replay_rows),
             "rows": replay_rows,
+            "targeted_family_accuracy": targeted_family_accuracy,
         },
         "false_negatives": false_negatives[:15],
         "false_positives": false_positives[:15],
@@ -833,9 +883,11 @@ def main():
     output_model.parent.mkdir(parents=True, exist_ok=True)
 
     rows = load_rows(dataset_path)
+    overlay_rows = merge_rows(*(load_rows(Path(path)) for path in args.overlay_training_data))
+    rows = merge_rows(rows, overlay_rows)
     splits = split_rows(rows)
-    regression_cases = load_cases(regression_path)
-    replay_cases = load_cases(replay_path)
+    regression_cases = merge_cases(load_cases(regression_path), *(load_cases(Path(path)) for path in args.overlay_regression_cases))
+    replay_cases = merge_cases(load_cases(replay_path), *(load_cases(Path(path)) for path in args.overlay_replay_cases))
 
     candidates = []
     candidates.append(run_baseline_candidate(splits, regression_cases, replay_cases))
@@ -920,6 +972,7 @@ def main():
             "train": len(splits.train),
             "dev": len(splits.dev),
             "test": len(splits.test),
+            "overlay_rows": len(overlay_rows),
             "label_counts": {
                 label: sum(1 for row in rows if row["intent"] == label) for label in v2.LABELS
             },
@@ -937,6 +990,7 @@ def main():
             "total": selected["replay"]["total"],
             "block_recall": selected["replay"]["block_recall"],
             "pass_recall": selected["replay"]["pass_recall"],
+            "targeted_family_accuracy": selected["replay"]["targeted_family_accuracy"],
             "rows": selected["replay"]["rows"],
         },
         "evaluation": {
@@ -974,6 +1028,9 @@ def main():
         "regression_full_match": report["regression_results"]["matched"] == report["regression_results"]["total"],
         "replay_block_recall": report["replay_results"]["block_recall"] >= 0.95,
         "replay_pass_recall": report["replay_results"]["pass_recall"] >= 0.95,
+        "verification_narration_ok": report["replay_results"]["targeted_family_accuracy"]["verification_narration"] >= 0.95,
+        "dependency_gap_grounded_ok": report["replay_results"]["targeted_family_accuracy"]["dependency_gap_grounded"] >= 0.95,
+        "capability_promise_unverified_ok": report["replay_results"]["targeted_family_accuracy"]["capability_promise_unverified"] >= 0.95,
         "reference_language_ok": report["evaluation"]["per_intent"]["reference_language"]["accuracy"] >= 0.97,
         "verified_limitation_ok": report["evaluation"]["per_intent"]["verified_limitation"]["accuracy"] >= 0.97,
         "reason_conditionally_ok": report["evaluation"]["per_intent"]["reason_conditionally"]["accuracy"] >= 0.97,

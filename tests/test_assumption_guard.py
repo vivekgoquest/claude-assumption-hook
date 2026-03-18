@@ -607,6 +607,87 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             self.assertEqual(payload["reason"], "train_failed")
             self.assertFalse(payload["retrain"])
 
+    def test_learning_cycle_passes_training_python_to_train_subprocess(self):
+        runtime = load_runtime_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_dir = tmp / "state"
+            queue_path = state_dir / "learning-queue.jsonl"
+            log_path = tmp / "assumption-guard.log.jsonl"
+            transcript_root = tmp / "projects"
+            transcript_root.mkdir(parents=True)
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            queue_path.write_text(json.dumps({"candidate_id": "candidate-a"}) + "\n")
+
+            original_review = runtime.review_rows_with_council
+            original_train = runtime.run_self_json_command
+            seen = {}
+            try:
+                pattern_families = [
+                    "verification_narration",
+                    "capability_promise_unverified",
+                    "dependency_gap_grounded",
+                    "reference_language",
+                    "describe_type",
+                ]
+                runtime.review_rows_with_council = lambda *args, **kwargs: {
+                    "consensus_rows": [
+                        {
+                            "candidate_id": f"candidate-{index}",
+                            "route": "staged_training",
+                            "final_intent": pattern_families[index % len(pattern_families)],
+                            "final_block": pattern_families[index % len(pattern_families)] in {"capability_promise_unverified"},
+                            "confidence": 0.96,
+                            "pattern_family": pattern_families[index % len(pattern_families)],
+                            "reviewer_ids": ["a", "b", "c"],
+                        }
+                        for index in range(20)
+                    ],
+                    "merged_rows": [
+                        {
+                            "candidate_id": f"candidate-{index}",
+                            "text": f"candidate text {index}",
+                            "final_intent": pattern_families[index % len(pattern_families)],
+                            "final_block": pattern_families[index % len(pattern_families)] in {"capability_promise_unverified"},
+                            "confidence": 0.96,
+                            "pattern_family": pattern_families[index % len(pattern_families)],
+                            "candidate_reason": "blocked_clause",
+                        }
+                        for index in range(20)
+                    ],
+                    "consolidated_rows": [],
+                }
+
+                def fake_train(*args, **kwargs):
+                    seen["python_executable"] = kwargs.get("python_executable")
+                    raise RuntimeError("train exploded")
+
+                runtime.run_self_json_command = fake_train
+                payload = runtime.command_learning_cycle(
+                    [
+                        "--state-dir",
+                        str(state_dir),
+                        "--queue-path",
+                        str(queue_path),
+                        "--log-path",
+                        str(log_path),
+                        "--transcript-root",
+                        str(transcript_root),
+                        "--min-review-batch",
+                        "1",
+                        "--training-python",
+                        "/tmp/fake-python3.11",
+                    ],
+                    emit_output=False,
+                )
+            finally:
+                runtime.review_rows_with_council = original_review
+                runtime.run_self_json_command = original_train
+
+            self.assertEqual(seen["python_executable"], "/tmp/fake-python3.11")
+            self.assertEqual(payload["status"], "captured")
+            self.assertEqual(payload["reason"], "train_failed")
+
     def test_build_review_batch_merges_and_dedupes_queue_and_mined_rows(self):
         runtime = load_runtime_module()
         with tempfile.TemporaryDirectory() as tmpdir:

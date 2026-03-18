@@ -1205,12 +1205,18 @@ def cooldown_remaining_seconds(state: dict, cooldown_seconds: int):
     return max(0, int(cooldown_seconds - elapsed))
 
 
-def run_self_json_command(mode: str, *extra_args: str, env_overrides: Optional[dict] = None):
+def run_self_json_command(
+    mode: str,
+    *extra_args: str,
+    env_overrides: Optional[dict] = None,
+    python_executable: Optional[str] = None,
+):
     env = os.environ.copy()
     if env_overrides:
         env.update(env_overrides)
+    command = [python_executable or TRIGGER_PYTHON, str(SCRIPT_PATH), mode, *extra_args]
     result = subprocess.run(
-        self_command(mode, *extra_args),
+        command,
         capture_output=True,
         text=True,
         cwd=str(WORKSPACE_ROOT),
@@ -2339,6 +2345,7 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
                     "--output-report",
                     str(report_path),
                     env_overrides={"ASSUMPTION_GUARD_DISABLE": "1"},
+                    python_executable=args.training_python,
                 )
             except RuntimeError as exc:
                 payload = {

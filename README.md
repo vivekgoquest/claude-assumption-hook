@@ -55,22 +55,15 @@ Without those packages, the hook still runs in regex-only mode.
 
 ### Setup
 
-1. Copy the hook files:
+1. Copy the packaged hook bundle:
 
 ```bash
 mkdir -p ~/.claude/hooks
-cp hook/assumption-guard.py ~/.claude/hooks/
+rm -rf ~/.claude/hooks/assumption-guard
+cp -R hook/assumption-guard ~/.claude/hooks/
 ```
 
-2. Copy the default v2 artifacts:
-
-```bash
-cp model/assumption-guard-v2.onnx ~/.claude/
-cp model/assumption-guard-v2-tokenizer.json ~/.claude/
-cp model/assumption-guard-v2-meta.json ~/.claude/
-```
-
-3. Merge the Stop hook into `~/.claude/settings.json`:
+2. Merge the Stop hook into `~/.claude/settings.json`:
 
 ```json
 {
@@ -80,7 +73,7 @@ cp model/assumption-guard-v2-meta.json ~/.claude/
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/assumption-guard.py",
+            "command": "python3 ~/.claude/hooks/assumption-guard/assumption-guard.py",
             "timeout": 10
           }
         ]
@@ -90,7 +83,7 @@ cp model/assumption-guard-v2-meta.json ~/.claude/
 }
 ```
 
-4. Start a new Claude Code session.
+3. Start a new Claude Code session.
 
 ## Logging
 
@@ -157,13 +150,13 @@ New runtime env vars:
 Run one full learning cycle with:
 
 ```bash
-python3.11 hook/assumption-guard.py learning-cycle
+python3.11 hook/assumption-guard/assumption-guard.py learning-cycle
 ```
 
 Run the objective trigger manually with:
 
 ```bash
-python3.11 hook/assumption-guard.py maybe-trigger
+python3.11 hook/assumption-guard/assumption-guard.py maybe-trigger
 ```
 
 It launches the heavy learning cycle only when one of these is true for pending queue rows:
@@ -175,7 +168,7 @@ It launches the heavy learning cycle only when one of these is true for pending 
 
 It also enforces cooldown and skips while a learning cycle lock is active.
 
-If you want the hook to invoke the gatekeeper immediately after queue append, set:
+The hook invokes the gatekeeper immediately after queue append by default. To make that explicit in your shell:
 
 ```bash
 export ASSUMPTION_GUARD_TRIGGER_MODE=post_append
@@ -219,19 +212,19 @@ The checked-in training path currently uses:
 Mine candidate clauses from local transcripts:
 
 ```bash
-python3.11 hook/assumption-guard.py mine --output /tmp/assumption-guard-mined-v2.jsonl
+python3.11 hook/assumption-guard/assumption-guard.py mine --output /tmp/assumption-guard-mined-v2.jsonl
 ```
 
 Train, compare candidates, export ONNX, and write the final report:
 
 ```bash
-python3.11 hook/assumption-guard.py train
+python3.11 hook/assumption-guard/assumption-guard.py train
 ```
 
 Train with local overlays merged in memory:
 
 ```bash
-python3.11 hook/assumption-guard.py train \
+python3.11 hook/assumption-guard/assumption-guard.py train \
   --overlay-training-data ~/.claude/assumption-guard-state/training-overlay.jsonl \
   --overlay-regression-cases ~/.claude/assumption-guard-state/regression-overlay.jsonl \
   --overlay-replay-cases ~/.claude/assumption-guard-state/replay-overlay.jsonl
@@ -240,17 +233,17 @@ python3.11 hook/assumption-guard.py train \
 Replay the committed regression fixture against the exported v2 assets:
 
 ```bash
-python3.11 hook/assumption-guard.py replay \
-  --regression-cases training/assumption-guard-regression-cases.json \
-  --model model/assumption-guard-v2.onnx \
-  --tokenizer model/assumption-guard-v2-tokenizer.json \
-  --meta model/assumption-guard-v2-meta.json \
+python3.11 hook/assumption-guard/assumption-guard.py replay \
+  --regression-cases hook/assumption-guard/baseline/assumption-guard-regression-cases.json \
+  --model hook/assumption-guard/assumption-guard-v2.onnx \
+  --tokenizer hook/assumption-guard/assumption-guard-v2-tokenizer.json \
+  --meta hook/assumption-guard/assumption-guard-v2-meta.json \
   --output /tmp/assumption-guard-v2-replay.json
 ```
 
 ## Current v2 Snapshot
 
-From `model/assumption-guard-v2-report.json`:
+From `hook/assumption-guard/baseline/assumption-guard-v2-report.json`:
 
 - dataset rows: `485`
 - split: `344 train / 72 dev / 69 test`
@@ -279,17 +272,17 @@ The final report currently shows all three candidates, with MiniLM selected as t
 
 ```text
 hook/
-├── assumption-guard.py
+├── assumption-guard/
+│   ├── assumption-guard.py
+│   ├── assumption-guard-v2.onnx
+│   ├── assumption-guard-v2-tokenizer.json
+│   ├── assumption-guard-v2-meta.json
+│   └── baseline/
+│       ├── assumption-guard-training-labeled.jsonl
+│       ├── assumption-guard-regression-cases.json
+│       ├── assumption-guard-replay-cases.json
+│       └── assumption-guard-v2-report.json
 └── settings-snippet.json
-model/
-├── assumption-guard-v2.onnx
-├── assumption-guard-v2-tokenizer.json
-├── assumption-guard-v2-meta.json
-└── assumption-guard-v2-report.json
-training/
-├── assumption-guard-training-labeled.jsonl
-├── assumption-guard-regression-cases.json
-├── assumption-guard-replay-cases.json
 tests/
 └── test_assumption_guard.py
 docs/

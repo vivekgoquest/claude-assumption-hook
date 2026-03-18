@@ -10,13 +10,15 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-HOOK_PATH = REPO_ROOT / "hook" / "assumption-guard.py"
-MODEL_PATH = REPO_ROOT / "model" / "assumption-guard-v2.onnx"
-TOKENIZER_PATH = REPO_ROOT / "model" / "assumption-guard-v2-tokenizer.json"
-META_PATH = REPO_ROOT / "model" / "assumption-guard-v2-meta.json"
-REPORT_PATH = REPO_ROOT / "model" / "assumption-guard-v2-report.json"
-REGRESSION_CASES_PATH = REPO_ROOT / "training" / "assumption-guard-regression-cases.json"
-LABELED_DATA_PATH = REPO_ROOT / "training" / "assumption-guard-training-labeled.jsonl"
+HOOK_PACKAGE_DIR = REPO_ROOT / "hook" / "assumption-guard"
+HOOK_PATH = HOOK_PACKAGE_DIR / "assumption-guard.py"
+MODEL_PATH = HOOK_PACKAGE_DIR / "assumption-guard-v2.onnx"
+TOKENIZER_PATH = HOOK_PACKAGE_DIR / "assumption-guard-v2-tokenizer.json"
+META_PATH = HOOK_PACKAGE_DIR / "assumption-guard-v2-meta.json"
+BASELINE_DIR = HOOK_PACKAGE_DIR / "baseline"
+REPORT_PATH = BASELINE_DIR / "assumption-guard-v2-report.json"
+REGRESSION_CASES_PATH = BASELINE_DIR / "assumption-guard-regression-cases.json"
+LABELED_DATA_PATH = BASELINE_DIR / "assumption-guard-training-labeled.jsonl"
 LEGACY_RUNTIME_PATH = REPO_ROOT / "hook" / "assumption_guard_v2.py"
 LEGACY_MODEL_HELPER_PATH = REPO_ROOT / "hook" / "assumption_guard_model.py"
 LEGACY_TRAINING_SCRIPT = REPO_ROOT / "training" / "train_assumption_guard.py"
@@ -308,6 +310,21 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
         for path in LEGACY_HELPER_SCRIPTS:
             self.assertFalse(path.exists(), path)
 
+    def test_packaged_assets_and_baseline_exist(self):
+        self.assertTrue(HOOK_PACKAGE_DIR.exists())
+        self.assertTrue(MODEL_PATH.exists())
+        self.assertTrue(TOKENIZER_PATH.exists())
+        self.assertTrue(META_PATH.exists())
+        self.assertTrue(BASELINE_DIR.exists())
+        self.assertTrue(LABELED_DATA_PATH.exists())
+        self.assertTrue(REGRESSION_CASES_PATH.exists())
+        self.assertTrue(REPORT_PATH.exists())
+
+    def test_settings_snippet_points_to_packaged_script(self):
+        settings = json.loads((REPO_ROOT / "hook" / "settings-snippet.json").read_text())
+        command = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
+        self.assertEqual(command, "python3 ~/.claude/hooks/assumption-guard/assumption-guard.py")
+
     def test_replay_script_runs_against_committed_assets(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "replay-report.json"
@@ -321,6 +338,34 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             replay = json.loads(output_path.read_text())
             self.assertEqual(replay["summary"]["matched"], replay["summary"]["total"])
+
+    def test_packaged_train_works_with_empty_state_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir) / "state"
+            output_model = Path(tmpdir) / "out.onnx"
+            output_tokenizer = Path(tmpdir) / "out-tokenizer.json"
+            output_meta = Path(tmpdir) / "out-meta.json"
+            output_report = Path(tmpdir) / "out-report.json"
+            result = run_mode(
+                "train",
+                "--epochs",
+                "1",
+                "--skip-deberta",
+                "--output-model",
+                output_model,
+                "--output-tokenizer",
+                output_tokenizer,
+                "--output-meta",
+                output_meta,
+                "--output-report",
+                output_report,
+                env={"ASSUMPTION_GUARD_STATE_DIR": str(state_dir)},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(output_model.exists())
+            self.assertTrue(output_tokenizer.exists())
+            self.assertTrue(output_meta.exists())
+            self.assertTrue(output_report.exists())
 
     def test_build_review_batch_merges_and_dedupes_queue_and_mined_rows(self):
         runtime = load_runtime_module()

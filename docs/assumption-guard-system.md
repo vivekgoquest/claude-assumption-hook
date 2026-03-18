@@ -26,7 +26,7 @@ It treats these as PASS:
 ## Execution Flow
 
 1. Claude finishes a turn.
-2. Claude Code invokes `hook/assumption-guard.py`.
+2. Claude Code invokes `hook/assumption-guard/assumption-guard.py`.
 3. The hook reads the transcript JSONL and extracts only the current assistant turn.
 4. The assistant text is split into clauses.
 5. Each clause goes through the v2 runtime pipeline:
@@ -50,7 +50,7 @@ The hook always exits `0`, even on fallback or internal errors, so it does not c
 
 The runtime unit is a clause, not a whole message.
 
-`hook/assumption-guard.py` splits on:
+`hook/assumption-guard/assumption-guard.py` splits on:
 
 - sentence boundaries
 - `;`
@@ -101,9 +101,9 @@ The ONNX model runs only on ambiguous clauses that survive the earlier filters.
 
 Runtime artifacts:
 
-- `model/assumption-guard-v2.onnx`
-- `model/assumption-guard-v2-tokenizer.json`
-- `model/assumption-guard-v2-meta.json`
+- `hook/assumption-guard/assumption-guard-v2.onnx`
+- `hook/assumption-guard/assumption-guard-v2-tokenizer.json`
+- `hook/assumption-guard/assumption-guard-v2-meta.json`
 
 The classifier produces 13 intent probabilities. Runtime sums the four BLOCK-class probabilities into `p_block` and blocks when `p_block >= threshold`.
 
@@ -202,7 +202,7 @@ Queue rows are sanitized before they are written.
 
 The learning cycle no longer needs a blind hourly schedule to decide when to run.
 
-`hook/assumption-guard.py maybe-trigger` checks only pending queue rows that have not already been reviewed. It triggers `hook/assumption-guard.py learning-cycle` only when an objective threshold is met:
+`hook/assumption-guard/assumption-guard.py maybe-trigger` checks only pending queue rows that have not already been reviewed. It triggers `hook/assumption-guard/assumption-guard.py learning-cycle` only when an objective threshold is met:
 
 - pending row count threshold
 - repeated `candidate_reason` threshold
@@ -215,24 +215,24 @@ It also enforces:
 - skip while `learning-cycle.lock` exists
 - a separate trigger-check lock to avoid duplicate launches
 
-The hook can optionally invoke this gatekeeper immediately after queue append when `ASSUMPTION_GUARD_TRIGGER_MODE=post_append`. Set `ASSUMPTION_GUARD_TRIGGER_MODE=off` to disable self-spawned trigger checks.
+The hook invokes this gatekeeper immediately after queue append by default when `ASSUMPTION_GUARD_TRIGGER_MODE=post_append`. Set `ASSUMPTION_GUARD_TRIGGER_MODE=off` to disable self-spawned trigger checks.
 
 ## Files
 
 Runtime:
 
-- `hook/assumption-guard.py`
+- `hook/assumption-guard/assumption-guard.py`
 - `hook/settings-snippet.json`
 
-Training and evaluation:
+Packaged baseline and report:
 
-- `training/assumption-guard-training-labeled.jsonl`
-- `training/assumption-guard-regression-cases.json`
-- `training/assumption-guard-replay-cases.json`
+- `hook/assumption-guard/baseline/assumption-guard-training-labeled.jsonl`
+- `hook/assumption-guard/baseline/assumption-guard-regression-cases.json`
+- `hook/assumption-guard/baseline/assumption-guard-replay-cases.json`
+- `hook/assumption-guard/baseline/assumption-guard-v2-report.json`
 
 Generated v2 artifacts:
 
-- `model/assumption-guard-v2.onnx`
-- `model/assumption-guard-v2-tokenizer.json`
-- `model/assumption-guard-v2-meta.json`
-- `model/assumption-guard-v2-report.json`
+- `hook/assumption-guard/assumption-guard-v2.onnx`
+- `hook/assumption-guard/assumption-guard-v2-tokenizer.json`
+- `hook/assumption-guard/assumption-guard-v2-meta.json`

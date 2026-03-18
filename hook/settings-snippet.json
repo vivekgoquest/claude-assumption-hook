@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/assumption-guard.py",
+            "command": "python3 ~/.claude/hooks/assumption-guard/assumption-guard.py",
             "timeout": 10
           }
         ]

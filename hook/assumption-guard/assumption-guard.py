@@ -164,25 +164,26 @@ LONG_NUMBER_RE = re.compile(r"\b\d{5,}\b")
 CHANNEL_ID_RE = re.compile(r"\bUC[a-zA-Z0-9_-]{10,}\b")
 
 SCRIPT_PATH = Path(__file__).resolve()
-WORKSPACE_ROOT = SCRIPT_PATH.parents[1] if len(SCRIPT_PATH.parents) > 1 else SCRIPT_PATH.parent
+PACKAGE_DIR = SCRIPT_PATH.parent
+WORKSPACE_ROOT = SCRIPT_PATH.parents[2] if len(SCRIPT_PATH.parents) > 2 else PACKAGE_DIR
 CLAUDE_DIR = os.path.join(os.path.expanduser("~"), ".claude")
 STATE_DIR = os.environ.get(
     "ASSUMPTION_GUARD_STATE_DIR",
     os.path.join(CLAUDE_DIR, "assumption-guard-state"),
 )
 STATE_PATH = Path(STATE_DIR)
-BASELINE_DIR = STATE_PATH / "baseline"
+BASELINE_DIR = PACKAGE_DIR / "baseline"
 MODEL_PATH = os.environ.get(
     "ASSUMPTION_GUARD_MODEL_PATH",
-    os.path.join(CLAUDE_DIR, "assumption-guard-v2.onnx"),
+    str(PACKAGE_DIR / "assumption-guard-v2.onnx"),
 )
 TOKENIZER_PATH = os.environ.get(
     "ASSUMPTION_GUARD_TOKENIZER_PATH",
-    os.path.join(CLAUDE_DIR, "assumption-guard-v2-tokenizer.json"),
+    str(PACKAGE_DIR / "assumption-guard-v2-tokenizer.json"),
 )
 META_PATH = os.environ.get(
     "ASSUMPTION_GUARD_META_PATH",
-    os.path.join(CLAUDE_DIR, "assumption-guard-v2-meta.json"),
+    str(PACKAGE_DIR / "assumption-guard-v2-meta.json"),
 )
 LOG_PATH = os.environ.get(
     "ASSUMPTION_GUARD_LOG_PATH",
@@ -221,9 +222,6 @@ v2 = _SelfProxy()
 
 
 def baseline_file_path(filename: str, repo_subdir: str) -> Path:
-    repo_candidate = WORKSPACE_ROOT / repo_subdir / filename
-    if repo_candidate.exists():
-        return repo_candidate
     return BASELINE_DIR / filename
 
 
@@ -1987,9 +1985,9 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
                     print(json.dumps(payload))
                 return payload
 
-            live_model = Path(CLAUDE_DIR) / "assumption-guard-v2.onnx"
-            live_tokenizer = Path(CLAUDE_DIR) / "assumption-guard-v2-tokenizer.json"
-            live_meta = Path(CLAUDE_DIR) / "assumption-guard-v2-meta.json"
+            live_model = PACKAGE_DIR / "assumption-guard-v2.onnx"
+            live_tokenizer = PACKAGE_DIR / "assumption-guard-v2-tokenizer.json"
+            live_meta = PACKAGE_DIR / "assumption-guard-v2-meta.json"
             os.replace(model_path, live_model)
             os.replace(tokenizer_path, live_tokenizer)
             os.replace(meta_path, live_meta)

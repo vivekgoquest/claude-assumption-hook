@@ -24,7 +24,7 @@ Runtime maps the first three classes to BLOCK and the rest to PASS.
 
 ## Dataset
 
-The committed corpus lives at `training/assumption-guard-training-labeled.jsonl`.
+The committed corpus lives inside the packaged baseline bundle at `hook/assumption-guard/baseline/assumption-guard-training-labeled.jsonl`.
 
 Current counts from the committed v2 report:
 
@@ -67,7 +67,7 @@ Each row uses the v2 schema:
 Transcript mining now runs through the single-file orchestrator:
 
 ```bash
-python3.11 hook/assumption-guard.py mine --output /tmp/assumption-guard-mined-v2.jsonl
+python3.11 hook/assumption-guard/assumption-guard.py mine --output /tmp/assumption-guard-mined-v2.jsonl
 ```
 
 It currently:
@@ -93,7 +93,7 @@ The current checked-in v2 training path uses:
 - `scikit-learn`
 - `rapidfuzz`
 
-Candidate families trained by `hook/assumption-guard.py train`:
+Candidate families trained by `hook/assumption-guard/assumption-guard.py train`:
 
 1. baseline: hashed TF-IDF + adaptive calibrated linear SVM fallback
 2. candidate A: `sentence-transformers/all-MiniLM-L6-v2`
@@ -104,7 +104,7 @@ Candidate families trained by `hook/assumption-guard.py train`:
 Run from the repo root:
 
 ```bash
-python3.11 hook/assumption-guard.py train
+python3.11 hook/assumption-guard/assumption-guard.py train
 ```
 
 The script will:
@@ -119,15 +119,15 @@ The script will:
 
 Generated artifacts:
 
-- `model/assumption-guard-v2.onnx`
-- `model/assumption-guard-v2-tokenizer.json`
-- `model/assumption-guard-v2-meta.json`
-- `model/assumption-guard-v2-report.json`
+- `hook/assumption-guard/assumption-guard-v2.onnx`
+- `hook/assumption-guard/assumption-guard-v2-tokenizer.json`
+- `hook/assumption-guard/assumption-guard-v2-meta.json`
+- `hook/assumption-guard/baseline/assumption-guard-v2-report.json`
 
 Local overlays can be merged into the training run without changing the committed baseline corpus:
 
 ```bash
-python3.11 hook/assumption-guard.py train \
+python3.11 hook/assumption-guard/assumption-guard.py train \
   --overlay-training-data ~/.claude/assumption-guard-state/training-overlay.jsonl \
   --overlay-regression-cases ~/.claude/assumption-guard-state/regression-overlay.jsonl \
   --overlay-replay-cases ~/.claude/assumption-guard-state/replay-overlay.jsonl
@@ -136,10 +136,10 @@ python3.11 hook/assumption-guard.py train \
 The objective trigger for when to run that training is handled separately by:
 
 ```bash
-python3.11 hook/assumption-guard.py maybe-trigger
+python3.11 hook/assumption-guard/assumption-guard.py maybe-trigger
 ```
 
-That gatekeeper checks only pending queue rows, not raw log-file size, and launches `hook/assumption-guard.py learning-cycle` only when the configured pending-row, cluster, age, and cooldown conditions are met.
+That gatekeeper checks only pending queue rows, not raw log-file size, and launches `hook/assumption-guard/assumption-guard.py learning-cycle` only when the configured pending-row, cluster, age, and cooldown conditions are met.
 
 ## Selection Logic
 
@@ -150,7 +150,7 @@ Candidate selection currently enforces:
 - replay coverage floors
 - preference for the smallest transformer that clears the gates
 
-The chosen runtime threshold is written into `model/assumption-guard-v2-meta.json` and is not tuned at runtime.
+The chosen runtime threshold is written into `hook/assumption-guard/assumption-guard-v2-meta.json` and is not tuned at runtime.
 
 Current selected model:
 
@@ -159,7 +159,7 @@ Current selected model:
 
 ## Current Report Snapshot
 
-From `model/assumption-guard-v2-report.json`:
+From `hook/assumption-guard/baseline/assumption-guard-v2-report.json`:
 
 - regression fixture: `62 / 62`
 - replay corpus: `17 / 17`
@@ -204,11 +204,11 @@ On non-native Apple Silicon training environments, the report records `latency_e
 Use the replay script to re-check committed assets without retraining:
 
 ```bash
-python3.11 hook/assumption-guard.py replay \
-  --regression-cases training/assumption-guard-regression-cases.json \
-  --model model/assumption-guard-v2.onnx \
-  --tokenizer model/assumption-guard-v2-tokenizer.json \
-  --meta model/assumption-guard-v2-meta.json \
+python3.11 hook/assumption-guard/assumption-guard.py replay \
+  --regression-cases hook/assumption-guard/baseline/assumption-guard-regression-cases.json \
+  --model hook/assumption-guard/assumption-guard-v2.onnx \
+  --tokenizer hook/assumption-guard/assumption-guard-v2-tokenizer.json \
+  --meta hook/assumption-guard/assumption-guard-v2-meta.json \
   --output /tmp/assumption-guard-v2-replay.json
 ```
 

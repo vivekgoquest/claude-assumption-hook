@@ -151,12 +151,39 @@ New runtime env vars:
 - `ASSUMPTION_GUARD_CAPTURE_MODE`
 - `ASSUMPTION_GUARD_LOW_MARGIN`
 - `ASSUMPTION_GUARD_DISABLE`
+- `ASSUMPTION_GUARD_TRIGGER_MODE`
+- `ASSUMPTION_GUARD_TRIGGER_SCRIPT`
+- `ASSUMPTION_GUARD_TRIGGER_PYTHON`
 
 Run one full learning cycle with:
 
 ```bash
 python3.11 training/run_learning_cycle.py
 ```
+
+The objective trigger is now a separate gatekeeper:
+
+```bash
+python3.11 training/maybe_trigger_learning_cycle.py
+```
+
+It launches the heavy learning cycle only when one of these is true for pending queue rows:
+
+- pending rows cross the configured threshold
+- one `candidate_reason` cluster is large enough
+- one `pattern_family` cluster is large enough
+- the oldest pending row is old enough
+
+It also enforces cooldown and skips while a learning cycle lock is active.
+
+If you want the hook to invoke the gatekeeper immediately after queue append, set:
+
+```bash
+export ASSUMPTION_GUARD_TRIGGER_MODE=post_append
+export ASSUMPTION_GUARD_TRIGGER_SCRIPT=/absolute/path/to/training/maybe_trigger_learning_cycle.py
+```
+
+Without those env vars, the hook only captures queue rows and never launches the trigger on its own.
 
 That cycle will:
 
@@ -266,6 +293,7 @@ training/
 ├── assumption-guard-regression-cases.json
 ├── assumption-guard-replay-cases.json
 ├── build_review_batch.py
+├── maybe_trigger_learning_cycle.py
 ├── mine_transcripts_v2.py
 ├── promote_reviewed_examples.py
 ├── replay_eval_v2.py

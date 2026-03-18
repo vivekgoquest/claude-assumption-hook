@@ -133,6 +133,14 @@ python3.11 training/train_v2.py \
   --overlay-replay-cases ~/.claude/assumption-guard-state/replay-overlay.jsonl
 ```
 
+The objective trigger for when to run that training is handled separately by:
+
+```bash
+python3.11 training/maybe_trigger_learning_cycle.py
+```
+
+That gatekeeper checks only pending queue rows, not raw log-file size, and launches `training/run_learning_cycle.py` only when the configured pending-row, cluster, age, and cooldown conditions are met.
+
 ## Selection Logic
 
 Candidate selection currently enforces:

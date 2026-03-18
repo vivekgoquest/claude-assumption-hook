@@ -9,6 +9,7 @@ import math
 import os
 import random
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence
@@ -177,6 +178,11 @@ QUEUE_PATH = os.environ.get(
 )
 CAPTURE_MODE = os.environ.get("ASSUMPTION_GUARD_CAPTURE_MODE", "learning")
 LOW_MARGIN = float(os.environ.get("ASSUMPTION_GUARD_LOW_MARGIN", "0.08"))
+TRIGGER_MODE = os.environ.get("ASSUMPTION_GUARD_TRIGGER_MODE", "off")
+TRIGGER_SCRIPT = os.environ.get("ASSUMPTION_GUARD_TRIGGER_SCRIPT", "")
+TRIGGER_PYTHON = os.environ.get("ASSUMPTION_GUARD_TRIGGER_PYTHON", sys.executable)
+TRANSCRIPT_ROOT = os.environ.get("ASSUMPTION_GUARD_TRANSCRIPT_ROOT", os.path.join(CLAUDE_DIR, "projects"))
+REVIEW_CLAUDE_CMD = os.environ.get("ASSUMPTION_GUARD_REVIEW_CLAUDE_CMD", "claude")
 DISABLE_HOOK = os.environ.get("ASSUMPTION_GUARD_DISABLE") == "1"
 JUDGEMENT_PASS_LABELS = {
     "verification_narration",
@@ -354,6 +360,7 @@ def quoted_or_code_clause(clause: str) -> bool:
 
 
 def serialize_observation(observation: ClauseObservation, threshold: Optional[float], session_id: str, cwd: str):
+    now = datetime.now(timezone.utc).isoformat()
     sanitized_text = sanitize_learning_text(observation.clause)
     sanitized_previous = sanitize_learning_text(observation.previous_clause or "")
     sanitized_next = sanitize_learning_text(observation.next_clause or "")
@@ -362,6 +369,7 @@ def serialize_observation(observation: ClauseObservation, threshold: Optional[fl
     return {
         "candidate_id": f"candidate-{candidate_hash[:16]}",
         "candidate_hash": candidate_hash,
+        "ts": now,
         "text": sanitized_text,
         "sanitized_text": sanitized_text,
         "previous_clause": sanitized_previous,
@@ -384,7 +392,7 @@ def serialize_observation(observation: ClauseObservation, threshold: Optional[fl
 
 def append_learning_candidates(rows: Sequence[dict]):
     if CAPTURE_MODE == "off" or not rows:
-        return
+        return False
     try:
         queue_path = QUEUE_PATH
         seen_path = os.path.join(os.path.dirname(queue_path), "seen-candidate-hashes.txt")
@@ -398,7 +406,7 @@ def append_learning_candidates(rows: Sequence[dict]):
 
         new_rows = [row for row in rows if row["candidate_hash"] not in seen_hashes]
         if not new_rows:
-            return
+            return False
 
         with open(queue_path, "a", encoding="utf-8") as merged, open(day_path, "a", encoding="utf-8") as daily, open(
             seen_path, "a", encoding="utf-8"
@@ -408,6 +416,36 @@ def append_learning_candidates(rows: Sequence[dict]):
                 merged.write(payload + "\n")
                 daily.write(payload + "\n")
                 seen_handle.write(row["candidate_hash"] + "\n")
+        return True
+    except OSError:
+        return False
+
+
+def maybe_trigger_learning_cycle():
+    if TRIGGER_MODE != "post_append" or not TRIGGER_SCRIPT or not os.path.exists(TRIGGER_SCRIPT):
+        return
+    try:
+        subprocess.Popen(
+            [
+                TRIGGER_PYTHON,
+                TRIGGER_SCRIPT,
+                "--state-dir",
+                STATE_DIR,
+                "--queue-path",
+                QUEUE_PATH,
+                "--log-path",
+                LOG_PATH,
+                "--transcript-root",
+                TRANSCRIPT_ROOT,
+                "--claude-cmd",
+                REVIEW_CLAUDE_CMD,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
     except OSError:
         return
 
@@ -891,7 +929,8 @@ def capture_learning_candidates(
         row = serialize_observation(observation, threshold, session_id, cwd)
         row["candidate_reason"] = reason
         candidate_rows.append(row)
-    append_learning_candidates(candidate_rows)
+    if append_learning_candidates(candidate_rows):
+        maybe_trigger_learning_cycle()
 
 
 def main():

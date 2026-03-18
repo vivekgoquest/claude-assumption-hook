@@ -62,6 +62,23 @@ def write_jsonl(path: Path, rows):
             handle.write(json.dumps(row, ensure_ascii=True) + "\n")
 
 
+def append_unique_jsonl(path: Path, rows, key_field: str):
+    existing = set()
+    if path.exists():
+        existing = {row.get(key_field) for row in read_jsonl(path)}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    appended = 0
+    with path.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            key = row.get(key_field)
+            if key in existing:
+                continue
+            handle.write(json.dumps(row, ensure_ascii=True) + "\n")
+            existing.add(key)
+            appended += 1
+    return appended
+
+
 @contextmanager
 def file_lock(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -191,7 +208,7 @@ def main():
             for reviewed in reviewed_rows:
                 source = batch_by_id.get(reviewed["candidate_id"], {})
                 merged_rows.append({**source, **reviewed})
-            write_jsonl(reviewed_merged_path, merged_rows)
+            append_unique_jsonl(reviewed_merged_path, merged_rows, "candidate_id")
 
             promote_summary = run_json_command(
                 [

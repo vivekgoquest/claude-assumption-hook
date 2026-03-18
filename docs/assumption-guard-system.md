@@ -198,6 +198,30 @@ The hook now queues:
 
 Queue rows are sanitized before they are written.
 
+## Objective Trigger
+
+The learning cycle no longer needs a blind hourly schedule to decide when to run.
+
+`training/maybe_trigger_learning_cycle.py` checks only pending queue rows that have not already been reviewed. It triggers `training/run_learning_cycle.py` only when an objective threshold is met:
+
+- pending row count threshold
+- repeated `candidate_reason` threshold
+- repeated `pattern_family` threshold
+- oldest pending age threshold
+
+It also enforces:
+
+- cooldown between launches
+- skip while `learning-cycle.lock` exists
+- a separate trigger-check lock to avoid duplicate launches
+
+The hook can optionally invoke this gatekeeper immediately after queue append when:
+
+- `ASSUMPTION_GUARD_TRIGGER_MODE=post_append`
+- `ASSUMPTION_GUARD_TRIGGER_SCRIPT` points to the gatekeeper script
+
+Otherwise, the trigger can be run manually or from any external launcher.
+
 ## Files
 
 Runtime:
@@ -211,6 +235,7 @@ Training and evaluation:
 - `training/assumption-guard-regression-cases.json`
 - `training/assumption-guard-replay-cases.json`
 - `training/build_review_batch.py`
+- `training/maybe_trigger_learning_cycle.py`
 - `training/mine_transcripts_v2.py`
 - `training/promote_reviewed_examples.py`
 - `training/replay_eval_v2.py`

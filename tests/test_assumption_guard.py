@@ -15,6 +15,7 @@ TRAINING_SCRIPT = REPO_ROOT / "training" / "train_v2.py"
 REPLAY_SCRIPT = REPO_ROOT / "training" / "replay_eval_v2.py"
 MINING_SCRIPT = REPO_ROOT / "training" / "mine_transcripts_v2.py"
 LEARNING_CYCLE_SCRIPT = REPO_ROOT / "training" / "run_learning_cycle.py"
+MAYBE_TRIGGER_SCRIPT = REPO_ROOT / "training" / "maybe_trigger_learning_cycle.py"
 BUILD_REVIEW_BATCH_SCRIPT = REPO_ROOT / "training" / "build_review_batch.py"
 REVIEW_WITH_CLAUDE_SCRIPT = REPO_ROOT / "training" / "review_with_claude.py"
 PROMOTE_REVIEWED_SCRIPT = REPO_ROOT / "training" / "promote_reviewed_examples.py"
@@ -289,6 +290,7 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
         self.assertTrue(TRAINING_SCRIPT.exists())
         self.assertTrue(REPLAY_SCRIPT.exists())
         self.assertTrue(LEARNING_CYCLE_SCRIPT.exists())
+        self.assertTrue(MAYBE_TRIGGER_SCRIPT.exists())
         self.assertTrue(BUILD_REVIEW_BATCH_SCRIPT.exists())
         self.assertTrue(REVIEW_WITH_CLAUDE_SCRIPT.exists())
         self.assertTrue(PROMOTE_REVIEWED_SCRIPT.exists())
@@ -644,6 +646,148 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             self.assertEqual(len(training_overlay), 2)
             reviewed_rows = [json.loads(line) for line in (state_dir / "reviewed-claude.jsonl").read_text().splitlines() if line.strip()]
             self.assertEqual(len(reviewed_rows), 2)
+
+    def test_maybe_trigger_uses_pending_rows_not_total_queue_size(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_dir = tmp / "state"
+            queue_path = state_dir / "learning-queue.jsonl"
+            reviewed_path = state_dir / "reviewed-claude.jsonl"
+            review_state_path = state_dir / "review-state.json"
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            queue_rows = [
+                {
+                    "candidate_id": "candidate-a",
+                    "candidate_hash": "hash-a",
+                    "candidate_reason": "blocked_clause",
+                    "intent": "capability_promise_unverified",
+                    "ts": "2026-03-18T00:00:00+00:00",
+                },
+                {
+                    "candidate_id": "candidate-b",
+                    "candidate_hash": "hash-b",
+                    "candidate_reason": "blocked_clause",
+                    "intent": "capability_promise_unverified",
+                    "ts": "2026-03-18T00:00:00+00:00",
+                },
+                {
+                    "candidate_id": "candidate-c",
+                    "candidate_hash": "hash-c",
+                    "candidate_reason": "heuristic_rescue",
+                    "intent": "verification_narration",
+                    "ts": "2026-03-18T00:00:00+00:00",
+                },
+            ]
+            reviewed_rows = [
+                {"candidate_id": "candidate-a", "candidate_hash": "hash-a"},
+                {"candidate_id": "candidate-b", "candidate_hash": "hash-b"},
+            ]
+            queue_path.write_text("\n".join(json.dumps(row) for row in queue_rows) + "\n")
+            reviewed_path.write_text("\n".join(json.dumps(row) for row in reviewed_rows) + "\n")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(MAYBE_TRIGGER_SCRIPT),
+                    "--state-dir",
+                    str(state_dir),
+                    "--queue-path",
+                    str(queue_path),
+                    "--reviewed-path",
+                    str(reviewed_path),
+                    "--review-state-path",
+                    str(review_state_path),
+                    "--pending-threshold",
+                    "2",
+                    "--same-reason-threshold",
+                    "3",
+                    "--same-family-threshold",
+                    "3",
+                    "--oldest-age-seconds",
+                    "999999",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=REPO_ROOT,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "skipped")
+            self.assertEqual(payload["reason"], "threshold_not_met")
+            self.assertEqual(payload["pending_rows"], 1)
+
+    def test_maybe_trigger_launches_learning_cycle_when_threshold_met(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_dir = tmp / "state"
+            queue_path = state_dir / "learning-queue.jsonl"
+            reviewed_path = state_dir / "reviewed-claude.jsonl"
+            review_state_path = state_dir / "review-state.json"
+            transcript_root = tmp / "projects"
+            transcript_root.mkdir(parents=True)
+            run_script = tmp / "fake_run_cycle.py"
+            marker_path = tmp / "launched.json"
+            run_script.write_text(
+                "\n".join(
+                    [
+                        "import json, sys",
+                        f"open({str(marker_path)!r}, 'w', encoding='utf-8').write(json.dumps(sys.argv[1:]))",
+                        "print(json.dumps({'status':'captured','retrain':False}))",
+                    ]
+                )
+            )
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            queue_rows = [
+                {
+                    "candidate_id": "candidate-a",
+                    "candidate_hash": "hash-a",
+                    "candidate_reason": "blocked_clause",
+                    "intent": "capability_promise_unverified",
+                    "ts": "2026-03-18T00:00:00+00:00",
+                },
+                {
+                    "candidate_id": "candidate-b",
+                    "candidate_hash": "hash-b",
+                    "candidate_reason": "blocked_clause",
+                    "intent": "capability_promise_unverified",
+                    "ts": "2026-03-18T00:00:00+00:00",
+                },
+            ]
+            queue_path.write_text("\n".join(json.dumps(row) for row in queue_rows) + "\n")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(MAYBE_TRIGGER_SCRIPT),
+                    "--state-dir",
+                    str(state_dir),
+                    "--queue-path",
+                    str(queue_path),
+                    "--reviewed-path",
+                    str(reviewed_path),
+                    "--review-state-path",
+                    str(review_state_path),
+                    "--run-script",
+                    str(run_script),
+                    "--transcript-root",
+                    str(transcript_root),
+                    "--pending-threshold",
+                    "2",
+                    "--cooldown-seconds",
+                    "0",
+                    "--foreground",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=REPO_ROOT,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "launched")
+            self.assertEqual(payload["trigger_reason"], "pending_rows")
+            self.assertTrue(marker_path.exists())
+            review_state = json.loads(review_state_path.read_text())
+            self.assertEqual(review_state["last_decision"], "launched")
 
     def test_committed_report_meets_acceptance_gates(self):
         report = json.loads(REPORT_PATH.read_text())

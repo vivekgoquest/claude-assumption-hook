@@ -41,6 +41,14 @@ def load_runtime_module():
     return module
 
 
+def load_review_module():
+    spec = importlib.util.spec_from_file_location("assumption_guard_review", REVIEW_WITH_CLAUDE_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def regression_cases():
     return json.loads(REGRESSION_CASES_PATH.read_text())
 
@@ -386,6 +394,101 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             texts = {row["text"] for row in rows}
             self.assertIn("Let me verify whether I can actually identify the new videos and remove them.", texts)
             self.assertIn("But if you want to revert, I can check which ones are new and remove them.", texts)
+
+    def test_review_prompt_is_strict_and_examples_are_present(self):
+        review = load_review_module()
+        rows = [
+            {
+                "id": "candidate-a",
+                "text": "Let me verify whether I can actually identify the new videos and remove them.",
+                "intent": "verification_narration",
+            }
+        ]
+        prompt = review.build_prompt(rows)
+        self.assertIn("You are a labeling worker for Assumption Guard.", prompt)
+        self.assertIn("You are not solving the user's problem.", prompt)
+        self.assertIn("Preserve candidate_id exactly and keep the same order as input.", prompt)
+        self.assertIn("Do not invent new labels.", prompt)
+        self.assertIn("Failure conditions:", prompt)
+        self.assertIn("verification_narration", prompt)
+        self.assertIn("capability_promise_unverified", prompt)
+        self.assertIn("dependency_gap_grounded", prompt)
+
+    def test_review_output_validation_rejects_drift(self):
+        review = load_review_module()
+        input_rows = [
+            {"id": "candidate-a"},
+            {"id": "candidate-b"},
+        ]
+        valid = json.dumps(
+            [
+                {
+                    "candidate_id": "candidate-a",
+                    "final_intent": "verification_narration",
+                    "final_block": False,
+                    "confidence": 0.91,
+                    "rationale": "The clause says it will verify now.",
+                    "pattern_family": "verification_narration",
+                },
+                {
+                    "candidate_id": "candidate-b",
+                    "final_intent": "capability_promise_unverified",
+                    "final_block": True,
+                    "confidence": 0.94,
+                    "rationale": "The clause promises action without evidence.",
+                    "pattern_family": "capability_promise_unverified",
+                },
+            ]
+        )
+        parsed = review.parse_review_output(valid, input_rows)
+        self.assertEqual(len(parsed), 2)
+
+        wrong_order = json.dumps(
+            [
+                {
+                    "candidate_id": "candidate-b",
+                    "final_intent": "capability_promise_unverified",
+                    "final_block": True,
+                    "confidence": 0.94,
+                    "rationale": "The clause promises action without evidence.",
+                    "pattern_family": "capability_promise_unverified",
+                },
+                {
+                    "candidate_id": "candidate-a",
+                    "final_intent": "verification_narration",
+                    "final_block": False,
+                    "confidence": 0.91,
+                    "rationale": "The clause says it will verify now.",
+                    "pattern_family": "verification_narration",
+                },
+            ]
+        )
+        with self.assertRaises(ValueError):
+            review.parse_review_output(wrong_order, input_rows)
+
+        extra_key = json.dumps(
+            [
+                {
+                    "candidate_id": "candidate-a",
+                    "final_intent": "verification_narration",
+                    "final_block": False,
+                    "confidence": 0.91,
+                    "rationale": "The clause says it will verify now.",
+                    "pattern_family": "verification_narration",
+                    "extra": "nope",
+                },
+                {
+                    "candidate_id": "candidate-b",
+                    "final_intent": "capability_promise_unverified",
+                    "final_block": True,
+                    "confidence": 0.94,
+                    "rationale": "The clause promises action without evidence.",
+                    "pattern_family": "capability_promise_unverified",
+                },
+            ]
+        )
+        with self.assertRaises(ValueError):
+            review.parse_review_output(extra_key, input_rows)
 
     def test_promote_reviewed_examples_routes_rows_to_overlays(self):
         with tempfile.TemporaryDirectory() as tmpdir:

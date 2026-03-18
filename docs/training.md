@@ -128,9 +128,12 @@ Local overlays can be merged into the training run without changing the committe
 
 ```bash
 python3.11 hook/assumption-guard/assumption-guard.py train \
-  --overlay-training-data ~/.claude/hooks/assumption-guard/state/training-overlay.jsonl \
-  --overlay-regression-cases ~/.claude/hooks/assumption-guard/state/regression-overlay.jsonl \
-  --overlay-replay-cases ~/.claude/hooks/assumption-guard/state/replay-overlay.jsonl
+  --overlay-training-data ~/.claude/hooks/assumption-guard/state/accepted-training-overlay.jsonl \
+  --overlay-training-data ~/.claude/hooks/assumption-guard/state/staged-training-overlay.jsonl \
+  --overlay-regression-cases ~/.claude/hooks/assumption-guard/state/accepted-regression-overlay.jsonl \
+  --overlay-regression-cases ~/.claude/hooks/assumption-guard/state/staged-regression-overlay.jsonl \
+  --overlay-replay-cases ~/.claude/hooks/assumption-guard/state/accepted-replay-overlay.jsonl \
+  --overlay-replay-cases ~/.claude/hooks/assumption-guard/state/staged-replay-overlay.jsonl
 ```
 
 The objective trigger for when to run that training is handled separately by:
@@ -140,6 +143,37 @@ python3.11 hook/assumption-guard/assumption-guard.py maybe-trigger
 ```
 
 That gatekeeper checks only pending queue rows, not raw log-file size, and launches `hook/assumption-guard/assumption-guard.py learning-cycle` only when the configured pending-row, cluster, age, and cooldown conditions are met.
+
+## Multi-Reviewer Learning Loop
+
+The autonomous relearn loop now has four layers before new data becomes accepted history:
+
+1. three independent `claude -p` reviewer runs
+2. deterministic consensus reduction
+3. an optional consolidator for disputed rows
+4. staged-vs-accepted overlay promotion
+
+That means new rows do not go directly into accepted overlays anymore. A learning cycle first writes:
+
+- `reviewed-a.jsonl`
+- `reviewed-b.jsonl`
+- `reviewed-c.jsonl`
+- `review-consensus.jsonl`
+- `review-consolidated.jsonl`
+- `staged-training-overlay.jsonl`
+- `staged-regression-overlay.jsonl`
+- `staged-replay-overlay.jsonl`
+
+If the candidate model trained with those staged rows fails replay/regression/targeted-family gates, the live assets are left alone and the staged rows do not become accepted overlays.
+
+If the candidate wins, the learning cycle:
+
+1. atomically swaps the live ONNX/tokenizer/meta assets
+2. advances staged rows into the `accepted-*` overlays
+3. writes `promotion-manifest.jsonl`
+4. updates `current-model-report.json`
+
+The learning cycle also computes batch-health gates before retraining. One-family floods, disagreement-heavy councils, duplicate-heavy batches, or excessive consolidator reliance are captured but skipped for retraining until the batch is healthier.
 
 ## Selection Logic
 

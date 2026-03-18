@@ -1340,6 +1340,16 @@ REQUIRED_REVIEW_KEYS = {
     "rationale",
     "pattern_family",
 }
+REQUIRED_CONSOLIDATION_KEYS = {
+    "candidate_id",
+    "route",
+    "final_intent",
+    "final_block",
+    "confidence",
+    "pattern_family",
+    "resolution_reason",
+}
+CONSOLIDATION_ROUTES = {"staged_training", "staged_regression", "staged_replay", "quarantine"}
 
 
 def build_review_prompt(rows: Sequence[dict]) -> str:
@@ -1420,6 +1430,87 @@ def parse_review_output(raw_output: str, input_rows: Sequence[dict]):
     return parsed
 
 
+def build_consolidator_prompt(disputed_rows: Sequence[dict]) -> str:
+    return (
+        "You are a consolidation worker for Assumption Guard.\n"
+        "You are resolving disputed reviewer outputs.\n"
+        "Return ONLY valid JSON and keep the same order as input.\n"
+        "Allowed routes: staged_training, staged_regression, staged_replay, quarantine.\n"
+        "Do not invent labels. Do not add keys.\n"
+        "Only choose staged_training when the row is safe enough to enter staged training data.\n"
+        "Use staged_regression or staged_replay for strategically valuable rows that should become fixtures first.\n"
+        "Output schema:\n"
+        '[{"candidate_id":"...","route":"staged_training","final_intent":"...","final_block":false,"confidence":0.83,"pattern_family":"...","resolution_reason":"..."}]\n'
+        "Cases:\n"
+        + json.dumps(list(disputed_rows), ensure_ascii=True, indent=2)
+    )
+
+
+def parse_consolidator_output(raw_output: str, disputed_rows: Sequence[dict]):
+    parsed = json.loads(raw_output)
+    if not isinstance(parsed, list):
+        raise ValueError("consolidator output must be a JSON array")
+    if len(parsed) != len(disputed_rows):
+        raise ValueError("consolidator output length must match input length")
+    expected_ids = [row["candidate_id"] for row in disputed_rows]
+    actual_ids = []
+    for row in parsed:
+        if not isinstance(row, dict):
+            raise ValueError("consolidator row must be an object")
+        missing = REQUIRED_CONSOLIDATION_KEYS.difference(row)
+        if missing:
+            raise ValueError(f"missing consolidation keys: {sorted(missing)}")
+        extras = set(row).difference(REQUIRED_CONSOLIDATION_KEYS)
+        if extras:
+            raise ValueError(f"unexpected consolidation keys: {sorted(extras)}")
+        if row["route"] not in CONSOLIDATION_ROUTES:
+            raise ValueError(f"unknown consolidation route: {row['route']}")
+        if row["final_intent"] not in LABELS:
+            raise ValueError(f"unknown final_intent: {row['final_intent']}")
+        if not isinstance(row["final_block"], bool):
+            raise ValueError("final_block must be a boolean")
+        if row["final_block"] != (row["final_intent"] in BLOCK_LABELS):
+            raise ValueError("final_block must match the policy implied by final_intent")
+        if not isinstance(row["confidence"], (int, float)):
+            raise ValueError("confidence must be numeric")
+        if not 0.0 <= float(row["confidence"]) <= 1.0:
+            raise ValueError("confidence must be between 0 and 1")
+        if not isinstance(row["resolution_reason"], str) or not row["resolution_reason"].strip():
+            raise ValueError("resolution_reason must be a non-empty string")
+        actual_ids.append(row["candidate_id"])
+    if actual_ids != expected_ids:
+        raise ValueError("candidate_id order must match the input order exactly")
+    return parsed
+
+
+def consolidate_disputed_rows(
+    disputed_rows: Sequence[dict],
+    *,
+    claude_cmd: str,
+    quarantine_dir: Path,
+    output_path: Optional[Path] = None,
+):
+    if not disputed_rows:
+        if output_path is not None:
+            write_jsonl(output_path, [])
+        return []
+    prompt = build_consolidator_prompt(disputed_rows)
+    last_error = None
+    quarantine_dir.mkdir(parents=True, exist_ok=True)
+    for attempt in range(2):
+        try:
+            raw_output = run_review_with_claude(claude_cmd, prompt)
+            resolved = parse_consolidator_output(raw_output, disputed_rows)
+            if output_path is not None:
+                write_jsonl(output_path, resolved)
+            return resolved
+        except Exception as exc:  # pragma: no cover - exercised in manual runs
+            last_error = exc
+    quarantine_path = quarantine_dir / f"consolidation-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.failed.jsonl"
+    write_jsonl(quarantine_path, disputed_rows)
+    raise RuntimeError(json.dumps({"error": str(last_error), "quarantined": str(quarantine_path)}))
+
+
 def run_review_with_claude(claude_cmd: str, prompt: str):
     command = shlex.split(claude_cmd) + ["-p", prompt]
     env = os.environ.copy()
@@ -1452,6 +1543,24 @@ def review_rows_with_claude(
     quarantine_path = quarantine_dir / f"review-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.failed.jsonl"
     write_jsonl(quarantine_path, input_rows)
     raise RuntimeError(json.dumps({"error": str(last_error), "quarantined": str(quarantine_path)}))
+
+
+def review_rows_with_reviewer(
+    input_rows: Sequence[dict],
+    *,
+    claude_cmd: str,
+    quarantine_dir: Path,
+    reviewer_id: str,
+    output_path: Path,
+):
+    reviewed = review_rows_with_claude(
+        input_rows,
+        claude_cmd=claude_cmd,
+        quarantine_dir=quarantine_dir,
+    )
+    stamped = [{**row, "reviewer_id": reviewer_id} for row in reviewed]
+    write_jsonl(output_path, stamped)
+    return stamped
 
 
 def training_row_from_review(row: dict) -> dict:
@@ -1490,37 +1599,56 @@ def replay_row_from_review(row: dict) -> dict:
     }
 
 
-def promote_reviewed_rows(
+def with_case_hash(rows: Iterable[dict]) -> List[dict]:
+    return [{**row, "case_hash": stable_sha1(row["text"])[:16]} for row in rows]
+
+
+def promote_reviewed_rows_to_staged(
     reviewed_rows: Sequence[dict],
     *,
-    training_overlay: Path,
-    regression_overlay: Path,
-    replay_overlay: Path,
+    staged_training_overlay: Path,
+    staged_regression_overlay: Path,
+    staged_replay_overlay: Path,
+    accepted_replay_overlay: Optional[Path] = None,
 ):
     family_counts = Counter(row.get("pattern_family", row.get("final_intent", "unknown")) for row in reviewed_rows)
-    training_rows = [training_row_from_review(row) for row in reviewed_rows]
+    training_rows = []
     regression_rows = []
     replay_rows = []
-    existing_replay_families = {row.get("group") for row in read_jsonl(replay_overlay)}
+    replay_sources = [staged_replay_overlay]
+    if accepted_replay_overlay is not None:
+        replay_sources.append(accepted_replay_overlay)
+    existing_replay_families = {
+        row.get("group")
+        for path in replay_sources
+        for row in read_jsonl(path)
+    }
 
     for row in reviewed_rows:
         candidate_reason = row.get("candidate_reason", "")
         confidence = float(row.get("confidence", 0.0))
         pattern_family = row.get("pattern_family", row.get("final_intent", "unknown"))
+        promotion_route = row.get("promotion_route", "staged_training")
+        if promotion_route == "staged_training":
+            training_rows.append(training_row_from_review(row))
         if row.get("disagrees_with_runtime") or confidence < 0.80 or candidate_reason in {"heuristic_rescue", "mixed_evidence_gap"}:
+            regression_rows.append(regression_row_from_review(row))
+        if promotion_route == "staged_regression":
             regression_rows.append(regression_row_from_review(row))
         if pattern_family not in existing_replay_families or family_counts[pattern_family] >= 3:
             replay_rows.append(replay_row_from_review(row))
+        if promotion_route == "staged_replay":
+            replay_rows.append(replay_row_from_review(row))
 
-    training_count = append_unique_jsonl(training_overlay, training_rows, "id")
+    training_count = append_unique_jsonl(staged_training_overlay, training_rows, "id")
     regression_count = append_unique_jsonl(
-        regression_overlay,
-        [{**row, "case_hash": stable_sha1(row["text"])[:16]} for row in regression_rows],
+        staged_regression_overlay,
+        with_case_hash(regression_rows),
         "case_hash",
     )
     replay_count = append_unique_jsonl(
-        replay_overlay,
-        [{**row, "case_hash": stable_sha1(row["text"])[:16]} for row in replay_rows],
+        staged_replay_overlay,
+        with_case_hash(replay_rows),
         "case_hash",
     )
     return {
@@ -1528,6 +1656,228 @@ def promote_reviewed_rows(
         "regression_promoted": regression_count,
         "replay_promoted": replay_count,
     }
+
+
+def advance_staged_rows_to_accepted(
+    *,
+    staged_training_overlay: Path,
+    staged_regression_overlay: Path,
+    staged_replay_overlay: Path,
+    accepted_training_overlay: Path,
+    accepted_regression_overlay: Path,
+    accepted_replay_overlay: Path,
+):
+    training_advanced = append_unique_jsonl(
+        accepted_training_overlay,
+        read_jsonl(staged_training_overlay),
+        "id",
+    )
+    regression_advanced = append_unique_jsonl(
+        accepted_regression_overlay,
+        read_jsonl(staged_regression_overlay),
+        "case_hash",
+    )
+    replay_advanced = append_unique_jsonl(
+        accepted_replay_overlay,
+        read_jsonl(staged_replay_overlay),
+        "case_hash",
+    )
+
+    for path in (
+        staged_training_overlay,
+        staged_regression_overlay,
+        staged_replay_overlay,
+    ):
+        if path.exists():
+            path.unlink()
+
+    return {
+        "training_advanced": training_advanced,
+        "regression_advanced": regression_advanced,
+        "replay_advanced": replay_advanced,
+    }
+
+
+def reduce_review_council(review_rows: Sequence[dict]) -> dict:
+    if len(review_rows) < 3:
+        raise ValueError("review council requires three reviewer rows")
+    candidate_id = review_rows[0].get("candidate_id")
+    if any(row.get("candidate_id") != candidate_id for row in review_rows):
+        raise ValueError("review council rows must belong to the same candidate")
+
+    block_values = {bool(row["final_block"]) for row in review_rows}
+    label_counts = Counter(row["final_intent"] for row in review_rows)
+    family_counts = Counter(row.get("pattern_family", row["final_intent"]) for row in review_rows)
+    confidences = [float(row["confidence"]) for row in review_rows]
+    top_label, top_label_count = label_counts.most_common(1)[0]
+    top_family, _ = family_counts.most_common(1)[0]
+    unanimous_label = len(label_counts) == 1
+    unanimous_block = len(block_values) == 1
+    median_confidence = statistics.median(confidences)
+
+    if not unanimous_block:
+        route = "quarantine"
+    elif unanimous_label and median_confidence >= 0.85:
+        route = "staged_training"
+    elif top_label_count >= 2 and median_confidence >= 0.75:
+        route = "staged_training"
+    else:
+        route = "needs_consolidation"
+
+    return {
+        "candidate_id": candidate_id,
+        "route": route,
+        "final_intent": top_label,
+        "final_block": bool(review_rows[0]["final_block"]) if unanimous_block else None,
+        "confidence": median_confidence,
+        "pattern_family": top_family,
+        "reviewer_ids": [row.get("reviewer_id") for row in review_rows],
+    }
+
+
+def review_batch_health_metrics(consensus_rows: Sequence[dict]) -> dict:
+    total = len(consensus_rows)
+    if total == 0:
+        return {
+            "total_rows": 0,
+            "largest_family_share": 0.0,
+            "disagreement_rate": 0.0,
+            "duplicate_rate": 0.0,
+            "consolidator_usage_rate": 0.0,
+        }
+    family_counts = Counter(row.get("pattern_family", "unknown") for row in consensus_rows)
+    candidate_ids = [row.get("candidate_id") for row in consensus_rows]
+    duplicate_rate = 1.0 - (len(set(candidate_ids)) / total if total else 1.0)
+    disagreement_rate = sum(
+        1 for row in consensus_rows if row.get("route") in {"quarantine", "needs_consolidation"}
+    ) / total
+    consolidator_usage_rate = sum(
+        1 for row in consensus_rows if row.get("route") == "needs_consolidation"
+    ) / total
+    return {
+        "total_rows": total,
+        "largest_family_share": max(family_counts.values(), default=0) / total,
+        "disagreement_rate": disagreement_rate,
+        "duplicate_rate": duplicate_rate,
+        "consolidator_usage_rate": consolidator_usage_rate,
+    }
+
+
+def review_batch_is_healthy(metrics: dict) -> bool:
+    total_rows = int(metrics.get("total_rows", 0))
+    if total_rows >= 5 and float(metrics.get("largest_family_share", 0.0)) > 0.80:
+        return False
+    if float(metrics.get("disagreement_rate", 0.0)) > 0.50:
+        return False
+    if float(metrics.get("duplicate_rate", 0.0)) > 0.10:
+        return False
+    if float(metrics.get("consolidator_usage_rate", 0.0)) > 0.50:
+        return False
+    return True
+
+
+def review_rows_with_council(
+    input_rows: Sequence[dict],
+    *,
+    claude_cmd: str,
+    quarantine_dir: Path,
+    output_dir: Path,
+):
+    reviewer_outputs = {}
+    for reviewer_id in ("a", "b", "c"):
+        reviewer_outputs[reviewer_id] = review_rows_with_reviewer(
+            input_rows,
+            claude_cmd=claude_cmd,
+            quarantine_dir=quarantine_dir,
+            reviewer_id=reviewer_id,
+            output_path=output_dir / f"reviewed-{reviewer_id}.jsonl",
+        )
+
+    consensus_rows = []
+    merged_rows = []
+    disputed_rows = []
+    input_by_id = {(row.get("id") or row.get("candidate_id")): row for row in input_rows}
+    for candidate_id in [row.get("id") or row.get("candidate_id") for row in input_rows]:
+        candidate_reviews = [
+            row
+            for rows in reviewer_outputs.values()
+            for row in rows
+            if row.get("candidate_id") == candidate_id
+        ]
+        consensus = reduce_review_council(candidate_reviews)
+        consensus_rows.append(consensus)
+        if consensus["route"] == "needs_consolidation":
+            disputed_rows.append(
+                {
+                    "candidate_id": candidate_id,
+                    "candidate": input_by_id.get(candidate_id, {}),
+                    "reviews": candidate_reviews,
+                    "consensus": consensus,
+                }
+            )
+            continue
+        if consensus["route"] != "staged_training" or consensus["final_block"] is None:
+            continue
+        source = input_by_id.get(candidate_id, {})
+        merged_rows.append(
+            {
+                **source,
+                "candidate_id": candidate_id,
+                "final_intent": consensus["final_intent"],
+                "final_block": consensus["final_block"],
+                "confidence": consensus["confidence"],
+                "pattern_family": consensus["pattern_family"],
+                "promotion_route": consensus["route"],
+                "reviewer_ids": consensus["reviewer_ids"],
+            }
+        )
+
+    write_jsonl(output_dir / "review-consensus.jsonl", consensus_rows)
+    consolidated_path = output_dir / "review-consolidated.jsonl"
+    consolidated_rows = consolidate_disputed_rows(
+        disputed_rows,
+        claude_cmd=claude_cmd,
+        quarantine_dir=quarantine_dir,
+        output_path=consolidated_path,
+    )
+    if not consolidated_path.exists():
+        write_jsonl(consolidated_path, consolidated_rows)
+    for row in consolidated_rows:
+        if row["route"] == "quarantine":
+            continue
+        source = input_by_id.get(row["candidate_id"], {})
+        merged_rows.append(
+            {
+                **source,
+                "candidate_id": row["candidate_id"],
+                "final_intent": row["final_intent"],
+                "final_block": row["final_block"],
+                "confidence": row["confidence"],
+                "pattern_family": row["pattern_family"],
+                "promotion_route": row["route"],
+                "resolution_reason": row["resolution_reason"],
+            }
+        )
+    return {
+        "consensus_rows": consensus_rows,
+        "merged_rows": merged_rows,
+        "consolidated_rows": consolidated_rows,
+    }
+
+
+def promote_reviewed_rows(
+    reviewed_rows: Sequence[dict],
+    *,
+    training_overlay: Path,
+    regression_overlay: Path,
+    replay_overlay: Path,
+):
+    return promote_reviewed_rows_to_staged(
+        reviewed_rows,
+        staged_training_overlay=training_overlay,
+        staged_regression_overlay=regression_overlay,
+        staged_replay_overlay=replay_overlay,
+    )
 
 
 def should_retrain(promote_summary: dict, reviewed_rows: Sequence[dict]):
@@ -1887,12 +2237,15 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
     lock_path = state_dir / "learning-cycle.lock"
     mined_path = state_dir / "mined-review-input.jsonl"
     review_batch_path = state_dir / "review-batch.jsonl"
-    reviewed_output_path = state_dir / "reviewed-claude.raw.jsonl"
-    reviewed_merged_path = state_dir / "reviewed-claude.jsonl"
     quarantine_dir = state_dir / "quarantine"
-    training_overlay = state_dir / "training-overlay.jsonl"
-    regression_overlay = state_dir / "regression-overlay.jsonl"
-    replay_overlay = state_dir / "replay-overlay.jsonl"
+    staged_training_overlay = state_dir / "staged-training-overlay.jsonl"
+    staged_regression_overlay = state_dir / "staged-regression-overlay.jsonl"
+    staged_replay_overlay = state_dir / "staged-replay-overlay.jsonl"
+    accepted_training_overlay = state_dir / "accepted-training-overlay.jsonl"
+    accepted_regression_overlay = state_dir / "accepted-regression-overlay.jsonl"
+    accepted_replay_overlay = state_dir / "accepted-replay-overlay.jsonl"
+    reviewed_merged_path = state_dir / "reviewed-claude.jsonl"
+    promotion_manifest_path = state_dir / "promotion-manifest.jsonl"
     current_report_path = state_dir / "current-model-report.json"
     candidates_root = state_dir / "candidates"
     candidates_root.mkdir(parents=True, exist_ok=True)
@@ -1916,25 +2269,34 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
                     print(json.dumps(payload))
                 return payload
 
-            reviewed_rows = review_rows_with_claude(
+            council_result = review_rows_with_council(
                 review_rows,
                 claude_cmd=args.claude_cmd,
                 quarantine_dir=quarantine_dir,
-                output_path=reviewed_output_path,
+                output_dir=state_dir,
             )
-            batch_by_id = {row.get("id") or row.get("candidate_id"): row for row in review_rows}
-            merged_rows = []
-            for reviewed in reviewed_rows:
-                source = batch_by_id.get(reviewed["candidate_id"], {})
-                merged_rows.append({**source, **reviewed})
+            merged_rows = council_result["merged_rows"]
             append_unique_jsonl(reviewed_merged_path, merged_rows, "candidate_id")
 
-            promote_summary = promote_reviewed_rows(
-                read_jsonl(reviewed_merged_path),
-                training_overlay=training_overlay,
-                regression_overlay=regression_overlay,
-                replay_overlay=replay_overlay,
+            promote_summary = promote_reviewed_rows_to_staged(
+                merged_rows,
+                staged_training_overlay=staged_training_overlay,
+                staged_regression_overlay=staged_regression_overlay,
+                staged_replay_overlay=staged_replay_overlay,
+                accepted_replay_overlay=accepted_replay_overlay,
             )
+            health = review_batch_health_metrics(council_result["consensus_rows"])
+            if not review_batch_is_healthy(health):
+                payload = {
+                    "status": "captured",
+                    "promoted": promote_summary,
+                    "retrain": False,
+                    "reason": "unhealthy_review_batch",
+                    "health": health,
+                }
+                if emit_output:
+                    print(json.dumps(payload))
+                return payload
             if not should_retrain(promote_summary, merged_rows):
                 payload = {"status": "captured", "promoted": promote_summary, "retrain": False}
                 if emit_output:
@@ -1952,11 +2314,17 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
             run_self_json_command(
                 "train",
                 "--overlay-training-data",
-                str(training_overlay),
+                str(accepted_training_overlay),
+                "--overlay-training-data",
+                str(staged_training_overlay),
                 "--overlay-regression-cases",
-                str(regression_overlay),
+                str(accepted_regression_overlay),
+                "--overlay-regression-cases",
+                str(staged_regression_overlay),
                 "--overlay-replay-cases",
-                str(replay_overlay),
+                str(accepted_replay_overlay),
+                "--overlay-replay-cases",
+                str(staged_replay_overlay),
                 "--output-model",
                 str(model_path),
                 "--output-tokenizer",
@@ -1991,8 +2359,35 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
             os.replace(model_path, live_model)
             os.replace(tokenizer_path, live_tokenizer)
             os.replace(meta_path, live_meta)
+            advance_summary = advance_staged_rows_to_accepted(
+                staged_training_overlay=staged_training_overlay,
+                staged_regression_overlay=staged_regression_overlay,
+                staged_replay_overlay=staged_replay_overlay,
+                accepted_training_overlay=accepted_training_overlay,
+                accepted_regression_overlay=accepted_regression_overlay,
+                accepted_replay_overlay=accepted_replay_overlay,
+            )
+            append_unique_jsonl(
+                promotion_manifest_path,
+                [
+                    {
+                        "manifest_id": stable_sha1(f"{timestamp}:{candidate_dir}")[:16],
+                        "candidate_dir": str(candidate_dir),
+                        "selected_candidate": candidate_report.get("selected_candidate"),
+                        "promoted_at": datetime.now(timezone.utc).isoformat(),
+                        "reviewed_candidate_ids": [row.get("candidate_id") for row in merged_rows],
+                        **advance_summary,
+                    }
+                ],
+                "manifest_id",
+            )
             current_report_path.write_text(json.dumps(candidate_report, indent=2))
-            payload = {"status": "promoted", "candidate_dir": str(candidate_dir), "family_metrics": family_metrics}
+            payload = {
+                "status": "promoted",
+                "candidate_dir": str(candidate_dir),
+                "family_metrics": family_metrics,
+                "advanced": advance_summary,
+            }
             if emit_output:
                 print(json.dumps(payload))
             return payload

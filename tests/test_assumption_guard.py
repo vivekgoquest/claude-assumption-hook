@@ -605,6 +605,296 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             review.parse_review_output(extra_key, input_rows)
 
+    def test_promote_reviewed_rows_stage_rows_without_touching_accepted(self):
+        review = load_runtime_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            staged_training = tmp / "staged-training-overlay.jsonl"
+            staged_regression = tmp / "staged-regression-overlay.jsonl"
+            staged_replay = tmp / "staged-replay-overlay.jsonl"
+            accepted_training = tmp / "accepted-training-overlay.jsonl"
+            accepted_regression = tmp / "accepted-regression-overlay.jsonl"
+            accepted_replay = tmp / "accepted-replay-overlay.jsonl"
+            reviewed_rows = [
+                {
+                    "candidate_id": "r-1",
+                    "text": "Let me verify whether I can actually identify the new videos and remove them.",
+                    "final_intent": "verification_narration",
+                    "final_block": False,
+                    "confidence": 0.92,
+                    "pattern_family": "verification_narration",
+                    "candidate_reason": "heuristic_rescue",
+                },
+                {
+                    "candidate_id": "r-2",
+                    "text": "But if you want to revert, I can check which ones are new and remove them.",
+                    "final_intent": "capability_promise_unverified",
+                    "final_block": True,
+                    "confidence": 0.95,
+                    "pattern_family": "capability_promise_unverified",
+                    "candidate_reason": "blocked_clause",
+                },
+            ]
+            result = review.promote_reviewed_rows_to_staged(
+                reviewed_rows,
+                staged_training_overlay=staged_training,
+                staged_regression_overlay=staged_regression,
+                staged_replay_overlay=staged_replay,
+            )
+            self.assertEqual(result["training_promoted"], 2)
+            self.assertTrue(staged_training.exists())
+            self.assertFalse(accepted_training.exists())
+            self.assertFalse(accepted_regression.exists())
+            self.assertFalse(accepted_replay.exists())
+
+    def test_advance_staged_rows_moves_only_unique_rows_into_accepted(self):
+        review = load_runtime_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            staged_training = tmp / "staged-training-overlay.jsonl"
+            staged_regression = tmp / "staged-regression-overlay.jsonl"
+            staged_replay = tmp / "staged-replay-overlay.jsonl"
+            accepted_training = tmp / "accepted-training-overlay.jsonl"
+            accepted_regression = tmp / "accepted-regression-overlay.jsonl"
+            accepted_replay = tmp / "accepted-replay-overlay.jsonl"
+
+            staged_training.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"id": "row-a", "text": "A"}),
+                        json.dumps({"id": "row-b", "text": "B"}),
+                    ]
+                )
+                + "\n"
+            )
+            staged_regression.write_text(
+                json.dumps({"case_hash": "case-a", "text": "A"}) + "\n"
+            )
+            staged_replay.write_text(
+                json.dumps({"case_hash": "case-b", "text": "B"}) + "\n"
+            )
+            accepted_training.write_text(json.dumps({"id": "row-a", "text": "A"}) + "\n")
+
+            result = review.advance_staged_rows_to_accepted(
+                staged_training_overlay=staged_training,
+                staged_regression_overlay=staged_regression,
+                staged_replay_overlay=staged_replay,
+                accepted_training_overlay=accepted_training,
+                accepted_regression_overlay=accepted_regression,
+                accepted_replay_overlay=accepted_replay,
+            )
+            self.assertEqual(result["training_advanced"], 1)
+            self.assertEqual(result["regression_advanced"], 1)
+            self.assertEqual(result["replay_advanced"], 1)
+            accepted_training_rows = [
+                json.loads(line)
+                for line in accepted_training.read_text().splitlines()
+                if line.strip()
+            ]
+            self.assertEqual({row["id"] for row in accepted_training_rows}, {"row-a", "row-b"})
+
+    def test_reduce_review_council_routes_unanimous_and_split_rows(self):
+        review = load_runtime_module()
+        unanimous_reviews = [
+            {
+                "reviewer_id": "a",
+                "candidate_id": "candidate-a",
+                "final_intent": "verification_narration",
+                "final_block": False,
+                "confidence": 0.93,
+                "rationale": "explicit verification narration",
+                "pattern_family": "verification_narration",
+            },
+            {
+                "reviewer_id": "b",
+                "candidate_id": "candidate-a",
+                "final_intent": "verification_narration",
+                "final_block": False,
+                "confidence": 0.88,
+                "rationale": "explicit verification narration",
+                "pattern_family": "verification_narration",
+            },
+            {
+                "reviewer_id": "c",
+                "candidate_id": "candidate-a",
+                "final_intent": "verification_narration",
+                "final_block": False,
+                "confidence": 0.9,
+                "rationale": "explicit verification narration",
+                "pattern_family": "verification_narration",
+            },
+        ]
+        unanimous = review.reduce_review_council(unanimous_reviews)
+        self.assertEqual(unanimous["route"], "staged_training")
+
+        split_reviews = [
+            {
+                "reviewer_id": "a",
+                "candidate_id": "candidate-b",
+                "final_intent": "verification_narration",
+                "final_block": False,
+                "confidence": 0.91,
+                "rationale": "explicit verification narration",
+                "pattern_family": "verification_narration",
+            },
+            {
+                "reviewer_id": "b",
+                "candidate_id": "candidate-b",
+                "final_intent": "capability_promise_unverified",
+                "final_block": True,
+                "confidence": 0.95,
+                "rationale": "unsupported promise",
+                "pattern_family": "capability_promise_unverified",
+            },
+            {
+                "reviewer_id": "c",
+                "candidate_id": "candidate-b",
+                "final_intent": "capability_promise_unverified",
+                "final_block": True,
+                "confidence": 0.89,
+                "rationale": "unsupported promise",
+                "pattern_family": "capability_promise_unverified",
+            },
+        ]
+        split = review.reduce_review_council(split_reviews)
+        self.assertEqual(split["route"], "quarantine")
+
+    def test_review_batch_health_rejects_one_family_flood(self):
+        review = load_runtime_module()
+        consensus_rows = [
+            {
+                "candidate_id": f"candidate-{index}",
+                "route": "staged_training",
+                "final_intent": "capability_promise_unverified",
+                "final_block": True,
+                "confidence": 0.96,
+                "pattern_family": "capability_promise_unverified",
+                "reviewer_ids": ["a", "b", "c"],
+            }
+            for index in range(6)
+        ]
+        metrics = review.review_batch_health_metrics(consensus_rows)
+        self.assertGreater(metrics["largest_family_share"], 0.8)
+        self.assertFalse(review.review_batch_is_healthy(metrics))
+
+    def test_review_batch_health_rejects_high_disagreement(self):
+        review = load_runtime_module()
+        consensus_rows = [
+            {
+                "candidate_id": "candidate-a",
+                "route": "quarantine",
+                "final_intent": "verification_narration",
+                "final_block": None,
+                "confidence": 0.72,
+                "pattern_family": "verification_narration",
+                "reviewer_ids": ["a", "b", "c"],
+            },
+            {
+                "candidate_id": "candidate-b",
+                "route": "needs_consolidation",
+                "final_intent": "reference_language",
+                "final_block": False,
+                "confidence": 0.7,
+                "pattern_family": "reference_language",
+                "reviewer_ids": ["a", "b", "c"],
+            },
+            {
+                "candidate_id": "candidate-c",
+                "route": "staged_training",
+                "final_intent": "verification_narration",
+                "final_block": False,
+                "confidence": 0.92,
+                "pattern_family": "verification_narration",
+                "reviewer_ids": ["a", "b", "c"],
+            },
+        ]
+        metrics = review.review_batch_health_metrics(consensus_rows)
+        self.assertGreater(metrics["disagreement_rate"], 0.5)
+        self.assertFalse(review.review_batch_is_healthy(metrics))
+
+    def test_review_rows_with_council_uses_consolidator_for_disputed_rows(self):
+        review = load_runtime_module()
+        input_rows = [
+            {
+                "id": "candidate-a",
+                "text": "I checked package.json and cannot confirm the config value from this repo.",
+                "candidate_reason": "mixed_evidence_gap",
+            }
+        ]
+        reviewer_outputs = {
+            "a": [
+                {
+                    "candidate_id": "candidate-a",
+                    "final_intent": "verified_limitation",
+                    "final_block": False,
+                    "confidence": 0.72,
+                    "rationale": "checked evidence then bounded non-conclusion",
+                    "pattern_family": "verified_limitation",
+                    "reviewer_id": "a",
+                }
+            ],
+            "b": [
+                {
+                    "candidate_id": "candidate-a",
+                    "final_intent": "dependency_gap_grounded",
+                    "final_block": False,
+                    "confidence": 0.71,
+                    "rationale": "missing dependency blocks next step",
+                    "pattern_family": "dependency_gap_grounded",
+                    "reviewer_id": "b",
+                }
+            ],
+            "c": [
+                {
+                    "candidate_id": "candidate-a",
+                    "final_intent": "reference_language",
+                    "final_block": False,
+                    "confidence": 0.69,
+                    "rationale": "policy-oriented reference phrasing",
+                    "pattern_family": "reference_language",
+                    "reviewer_id": "c",
+                }
+            ],
+        }
+
+        original_review_rows_with_reviewer = review.review_rows_with_reviewer
+        original_consolidate_disputed_rows = review.consolidate_disputed_rows
+        try:
+            review.review_rows_with_reviewer = (
+                lambda input_rows, claude_cmd, quarantine_dir, reviewer_id, output_path: reviewer_outputs[reviewer_id]
+            )
+            review.consolidate_disputed_rows = lambda disputed_rows, **kwargs: [
+                {
+                    "candidate_id": "candidate-a",
+                    "route": "staged_training",
+                    "final_intent": "dependency_gap_grounded",
+                    "final_block": False,
+                    "confidence": 0.83,
+                    "pattern_family": "dependency_gap_grounded",
+                    "resolution_reason": "resolved from reviewer disagreement",
+                }
+            ]
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp = Path(tmpdir)
+                result = review.review_rows_with_council(
+                    input_rows,
+                    claude_cmd="claude",
+                    quarantine_dir=tmp / "quarantine",
+                    output_dir=tmp,
+                )
+                self.assertEqual(len(result["merged_rows"]), 1)
+                self.assertEqual(result["merged_rows"][0]["final_intent"], "dependency_gap_grounded")
+                consolidated_rows = [
+                    json.loads(line)
+                    for line in (tmp / "review-consolidated.jsonl").read_text().splitlines()
+                    if line.strip()
+                ]
+                self.assertEqual(len(consolidated_rows), 1)
+                self.assertEqual(consolidated_rows[0]["route"], "staged_training")
+        finally:
+            review.review_rows_with_reviewer = original_review_rows_with_reviewer
+            review.consolidate_disputed_rows = original_consolidate_disputed_rows
+
     def test_promote_reviewed_examples_routes_rows_to_overlays(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -741,10 +1031,290 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertEqual(payload["status"], "captured")
             self.assertFalse(payload["retrain"])
-            training_overlay = [json.loads(line) for line in (state_dir / "training-overlay.jsonl").read_text().splitlines() if line.strip()]
-            self.assertEqual(len(training_overlay), 2)
-            reviewed_rows = [json.loads(line) for line in (state_dir / "reviewed-claude.jsonl").read_text().splitlines() if line.strip()]
-            self.assertEqual(len(reviewed_rows), 2)
+            staged_training_overlay = [
+                json.loads(line)
+                for line in (state_dir / "staged-training-overlay.jsonl").read_text().splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(staged_training_overlay), 2)
+            self.assertFalse((state_dir / "accepted-training-overlay.jsonl").exists())
+            for reviewer_id in ("a", "b", "c"):
+                self.assertTrue((state_dir / f"reviewed-{reviewer_id}.jsonl").exists())
+            consensus_rows = [
+                json.loads(line)
+                for line in (state_dir / "review-consensus.jsonl").read_text().splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(consensus_rows), 2)
+            self.assertTrue(all(row["route"] == "staged_training" for row in consensus_rows))
+
+    def test_learning_cycle_rejected_candidate_keeps_accepted_overlays_unchanged(self):
+        review = load_runtime_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_dir = tmp / "state"
+            queue_path = state_dir / "learning-queue.jsonl"
+            log_path = tmp / "assumption-guard.log.jsonl"
+            transcript_root = tmp / "projects"
+            transcript_root.mkdir(parents=True)
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            queue_path.write_text(json.dumps({"candidate_id": "candidate-a"}) + "\n")
+
+            accepted_training = state_dir / "accepted-training-overlay.jsonl"
+            accepted_training.write_text(json.dumps({"id": "accepted-row", "text": "keep me"}) + "\n")
+            current_report_path = state_dir / "current-model-report.json"
+            current_report = json.loads(REPORT_PATH.read_text())
+            current_report_path.write_text(json.dumps(current_report))
+
+            original_review = review.review_rows_with_council
+            original_train = review.run_self_json_command
+            try:
+                review.review_rows_with_council = lambda *args, **kwargs: {
+                    "consensus_rows": [
+                        {
+                            "candidate_id": "candidate-a",
+                            "route": "staged_training",
+                            "final_intent": "capability_promise_unverified",
+                            "final_block": True,
+                            "confidence": 0.96,
+                            "pattern_family": "capability_promise_unverified",
+                            "reviewer_ids": ["a", "b", "c"],
+                        }
+                    ],
+                    "merged_rows": [
+                        {
+                            "candidate_id": "candidate-a",
+                            "text": "But if you want to revert, I can check which ones are new and remove them.",
+                            "final_intent": "capability_promise_unverified",
+                            "final_block": True,
+                            "confidence": 0.96,
+                            "pattern_family": "capability_promise_unverified",
+                            "candidate_reason": "heuristic_rescue",
+                        }
+                    ],
+                }
+
+                def fake_train(mode, *extra_args, **kwargs):
+                    self.assertEqual(mode, "train")
+                    args = list(extra_args)
+                    model_path = Path(args[args.index("--output-model") + 1])
+                    tokenizer_path = Path(args[args.index("--output-tokenizer") + 1])
+                    meta_path = Path(args[args.index("--output-meta") + 1])
+                    report_path = Path(args[args.index("--output-report") + 1])
+                    model_path.write_text("model")
+                    tokenizer_path.write_text("{}")
+                    meta_path.write_text("{}")
+                    report_path.write_text(json.dumps(current_report))
+                    return {}
+
+                review.run_self_json_command = fake_train
+                payload = review.command_learning_cycle(
+                    [
+                        "--state-dir",
+                        str(state_dir),
+                        "--queue-path",
+                        str(queue_path),
+                        "--log-path",
+                        str(log_path),
+                        "--transcript-root",
+                        str(transcript_root),
+                        "--min-review-batch",
+                        "1",
+                    ],
+                    emit_output=False,
+                )
+            finally:
+                review.review_rows_with_council = original_review
+                review.run_self_json_command = original_train
+
+            self.assertEqual(payload["status"], "trained")
+            self.assertFalse(payload["promoted"])
+            accepted_rows = [
+                json.loads(line)
+                for line in accepted_training.read_text().splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(accepted_rows), 1)
+            self.assertEqual(accepted_rows[0]["id"], "accepted-row")
+            staged_rows = [
+                json.loads(line)
+                for line in (state_dir / "staged-training-overlay.jsonl").read_text().splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(staged_rows), 1)
+
+    def test_learning_cycle_promoted_candidate_advances_staged_and_writes_manifest(self):
+        review = load_runtime_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_dir = tmp / "state"
+            queue_path = state_dir / "learning-queue.jsonl"
+            log_path = tmp / "assumption-guard.log.jsonl"
+            transcript_root = tmp / "projects"
+            transcript_root.mkdir(parents=True)
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            queue_path.write_text(json.dumps({"candidate_id": "candidate-a"}) + "\n")
+
+            current_report = json.loads(REPORT_PATH.read_text())
+            weaker_report = json.loads(REPORT_PATH.read_text())
+            weaker_report["replay_results"]["block_recall"] = 0.95
+            weaker_report["replay_results"]["pass_recall"] = 0.95
+            weaker_report["regression_results"]["matched"] = weaker_report["regression_results"]["total"]
+            (state_dir / "current-model-report.json").write_text(json.dumps(weaker_report))
+
+            original_model = (HOOK_PACKAGE_DIR / "assumption-guard-v2.onnx").read_bytes()
+            original_tokenizer = TOKENIZER_PATH.read_text()
+            original_meta = META_PATH.read_text()
+
+            original_review = review.review_rows_with_council
+            original_train = review.run_self_json_command
+            try:
+                review.review_rows_with_council = lambda *args, **kwargs: {
+                    "consensus_rows": [
+                        {
+                            "candidate_id": "candidate-a",
+                            "route": "staged_training",
+                            "final_intent": "capability_promise_unverified",
+                            "final_block": True,
+                            "confidence": 0.96,
+                            "pattern_family": "capability_promise_unverified",
+                            "reviewer_ids": ["a", "b", "c"],
+                        }
+                    ],
+                    "merged_rows": [
+                        {
+                            "candidate_id": "candidate-a",
+                            "text": "But if you want to revert, I can check which ones are new and remove them.",
+                            "final_intent": "capability_promise_unverified",
+                            "final_block": True,
+                            "confidence": 0.96,
+                            "pattern_family": "capability_promise_unverified",
+                            "candidate_reason": "heuristic_rescue",
+                        }
+                    ],
+                }
+
+                def fake_train(mode, *extra_args, **kwargs):
+                    self.assertEqual(mode, "train")
+                    args = list(extra_args)
+                    model_path = Path(args[args.index("--output-model") + 1])
+                    tokenizer_path = Path(args[args.index("--output-tokenizer") + 1])
+                    meta_path = Path(args[args.index("--output-meta") + 1])
+                    report_path = Path(args[args.index("--output-report") + 1])
+                    model_path.write_text("promoted-model")
+                    tokenizer_path.write_text('{"ok":true}')
+                    meta_path.write_text('{"threshold":0.2}')
+                    report_path.write_text(json.dumps(current_report))
+                    return {}
+
+                review.run_self_json_command = fake_train
+                payload = review.command_learning_cycle(
+                    [
+                        "--state-dir",
+                        str(state_dir),
+                        "--queue-path",
+                        str(queue_path),
+                        "--log-path",
+                        str(log_path),
+                        "--transcript-root",
+                        str(transcript_root),
+                        "--min-review-batch",
+                        "1",
+                    ],
+                    emit_output=False,
+                )
+            finally:
+                review.review_rows_with_council = original_review
+                review.run_self_json_command = original_train
+                (HOOK_PACKAGE_DIR / "assumption-guard-v2.onnx").write_bytes(original_model)
+                TOKENIZER_PATH.write_text(original_tokenizer)
+                META_PATH.write_text(original_meta)
+
+            self.assertEqual(payload["status"], "promoted")
+            self.assertFalse((state_dir / "staged-training-overlay.jsonl").exists())
+            accepted_rows = [
+                json.loads(line)
+                for line in (state_dir / "accepted-training-overlay.jsonl").read_text().splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(accepted_rows), 1)
+            manifest_rows = [
+                json.loads(line)
+                for line in (state_dir / "promotion-manifest.jsonl").read_text().splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(manifest_rows), 1)
+            self.assertEqual(manifest_rows[0]["training_advanced"], 1)
+
+    def test_learning_cycle_skips_retrain_for_unhealthy_review_batch(self):
+        review = load_runtime_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_dir = tmp / "state"
+            queue_path = state_dir / "learning-queue.jsonl"
+            log_path = tmp / "assumption-guard.log.jsonl"
+            transcript_root = tmp / "projects"
+            transcript_root.mkdir(parents=True)
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            queue_path.write_text(json.dumps({"candidate_id": "candidate-a"}) + "\n")
+
+            original_review = review.review_rows_with_council
+            original_train = review.run_self_json_command
+            try:
+                review.review_rows_with_council = lambda *args, **kwargs: {
+                    "consensus_rows": [
+                        {
+                            "candidate_id": f"candidate-{index}",
+                            "route": "staged_training",
+                            "final_intent": "capability_promise_unverified",
+                            "final_block": True,
+                            "confidence": 0.96,
+                            "pattern_family": "capability_promise_unverified",
+                            "reviewer_ids": ["a", "b", "c"],
+                        }
+                        for index in range(6)
+                    ],
+                    "merged_rows": [
+                        {
+                            "candidate_id": f"candidate-{index}",
+                            "text": f"candidate text {index}",
+                            "final_intent": "capability_promise_unverified",
+                            "final_block": True,
+                            "confidence": 0.96,
+                            "pattern_family": "capability_promise_unverified",
+                            "candidate_reason": "blocked_clause",
+                        }
+                        for index in range(6)
+                    ],
+                    "consolidated_rows": [],
+                }
+
+                def fail_if_train_called(*args, **kwargs):
+                    raise AssertionError("train should not run for an unhealthy batch")
+
+                review.run_self_json_command = fail_if_train_called
+                payload = review.command_learning_cycle(
+                    [
+                        "--state-dir",
+                        str(state_dir),
+                        "--queue-path",
+                        str(queue_path),
+                        "--log-path",
+                        str(log_path),
+                        "--transcript-root",
+                        str(transcript_root),
+                        "--min-review-batch",
+                        "1",
+                    ],
+                    emit_output=False,
+                )
+            finally:
+                review.review_rows_with_council = original_review
+                review.run_self_json_command = original_train
+
+            self.assertEqual(payload["status"], "captured")
+            self.assertFalse(payload["retrain"])
+            self.assertEqual(payload["reason"], "unhealthy_review_batch")
 
     def test_maybe_trigger_uses_pending_rows_not_total_queue_size(self):
         with tempfile.TemporaryDirectory() as tmpdir:

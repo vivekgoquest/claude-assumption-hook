@@ -126,7 +126,19 @@ At runtime the installed hook creates a local `state/` folder inside that same p
 ├── assumption-guard.log.jsonl
 ├── learning-queue.jsonl
 ├── queue/
+├── reviewed-a.jsonl
+├── reviewed-b.jsonl
+├── reviewed-c.jsonl
+├── review-consensus.jsonl
+├── review-consolidated.jsonl
 ├── reviewed-claude.jsonl
+├── staged-training-overlay.jsonl
+├── staged-regression-overlay.jsonl
+├── staged-replay-overlay.jsonl
+├── accepted-training-overlay.jsonl
+├── accepted-regression-overlay.jsonl
+├── accepted-replay-overlay.jsonl
+├── promotion-manifest.jsonl
 ├── current-model-report.json
 └── candidates/
 ```
@@ -162,7 +174,12 @@ The learning loop is local and iterative:
 
 1. the live hook writes high-value clauses to the learning queue
 2. `maybe-trigger` checks whether there is enough pending signal
-3. `learning-cycle` builds a review batch, calls `claude -p`, promotes reviewed rows into overlays, retrains from scratch, and only swaps the live assets if the candidate beats the current model
+3. `learning-cycle` builds a review batch and runs a 3-reviewer `claude -p` council
+4. agreement is reduced deterministically; disputed rows go through a consolidator
+5. reviewed rows land in `staged-*` overlays first, not `accepted-*`
+6. unhealthy batches are captured but do not trigger retraining
+7. retraining uses packaged baseline + accepted overlays + current staged rows
+8. only a winning candidate advances staged rows into accepted overlays and swaps the live assets
 
 Useful commands:
 

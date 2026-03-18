@@ -182,10 +182,19 @@ Default local mutable state:
 
 - `~/.claude/hooks/assumption-guard/state/learning-queue.jsonl`
 - `~/.claude/hooks/assumption-guard/state/queue/YYYY-MM-DD.jsonl`
-- `~/.claude/hooks/assumption-guard/state/training-overlay.jsonl`
-- `~/.claude/hooks/assumption-guard/state/regression-overlay.jsonl`
-- `~/.claude/hooks/assumption-guard/state/replay-overlay.jsonl`
+- `~/.claude/hooks/assumption-guard/state/reviewed-a.jsonl`
+- `~/.claude/hooks/assumption-guard/state/reviewed-b.jsonl`
+- `~/.claude/hooks/assumption-guard/state/reviewed-c.jsonl`
+- `~/.claude/hooks/assumption-guard/state/review-consensus.jsonl`
+- `~/.claude/hooks/assumption-guard/state/review-consolidated.jsonl`
+- `~/.claude/hooks/assumption-guard/state/staged-training-overlay.jsonl`
+- `~/.claude/hooks/assumption-guard/state/staged-regression-overlay.jsonl`
+- `~/.claude/hooks/assumption-guard/state/staged-replay-overlay.jsonl`
+- `~/.claude/hooks/assumption-guard/state/accepted-training-overlay.jsonl`
+- `~/.claude/hooks/assumption-guard/state/accepted-regression-overlay.jsonl`
+- `~/.claude/hooks/assumption-guard/state/accepted-replay-overlay.jsonl`
 - `~/.claude/hooks/assumption-guard/state/reviewed-claude.jsonl`
+- `~/.claude/hooks/assumption-guard/state/promotion-manifest.jsonl`
 - `~/.claude/hooks/assumption-guard/state/current-model-report.json`
 
 The hook now queues:
@@ -217,6 +226,26 @@ It also enforces:
 
 The hook invokes this gatekeeper immediately after queue append by default when `ASSUMPTION_GUARD_TRIGGER_MODE=post_append`. Set `ASSUMPTION_GUARD_TRIGGER_MODE=off` to disable self-spawned trigger checks.
 
+## Review Council And Staging
+
+The learning cycle no longer trusts a single reviewer response.
+
+1. `learning-cycle` builds a sanitized review batch.
+2. Three independent `claude -p` reviewers label that same batch.
+3. Their outputs are stored separately in:
+   - `reviewed-a.jsonl`
+   - `reviewed-b.jsonl`
+   - `reviewed-c.jsonl`
+4. Deterministic consensus reduces agreement first:
+   - unanimous or strong-agreement rows can become `staged_training`
+   - clearly unsafe rows are quarantined
+   - disputed rows are sent to a consolidator
+5. Consolidated rows are written to `review-consolidated.jsonl`.
+6. Only `staged-*` overlays are updated during the current learning cycle.
+7. `accepted-*` overlays move forward only after a newly trained candidate clears all promotion gates.
+
+This is the main safety boundary for autonomous learning: new judgment enters the system in staged form first, and only proven model promotions can turn it into accepted training history.
+
 ## Files
 
 Runtime:
@@ -241,5 +270,17 @@ Mutable runtime state is created locally inside the installed hook package and i
 
 - `hook/assumption-guard/state/assumption-guard.log.jsonl`
 - `hook/assumption-guard/state/learning-queue.jsonl`
+- `hook/assumption-guard/state/reviewed-a.jsonl`
+- `hook/assumption-guard/state/reviewed-b.jsonl`
+- `hook/assumption-guard/state/reviewed-c.jsonl`
+- `hook/assumption-guard/state/review-consensus.jsonl`
+- `hook/assumption-guard/state/review-consolidated.jsonl`
 - `hook/assumption-guard/state/reviewed-claude.jsonl`
+- `hook/assumption-guard/state/staged-training-overlay.jsonl`
+- `hook/assumption-guard/state/staged-regression-overlay.jsonl`
+- `hook/assumption-guard/state/staged-replay-overlay.jsonl`
+- `hook/assumption-guard/state/accepted-training-overlay.jsonl`
+- `hook/assumption-guard/state/accepted-regression-overlay.jsonl`
+- `hook/assumption-guard/state/accepted-replay-overlay.jsonl`
+- `hook/assumption-guard/state/promotion-manifest.jsonl`
 - `hook/assumption-guard/state/current-model-report.json`

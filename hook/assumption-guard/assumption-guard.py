@@ -1219,7 +1219,11 @@ def run_self_json_command(mode: str, *extra_args: str, env_overrides: Optional[d
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or f"{mode} failed")
-    return json.loads(result.stdout.strip() or "{}")
+    payload = json.loads(result.stdout.strip() or "{}")
+    if isinstance(payload, dict) and payload.get("status") == "failed":
+        detail = payload.get("reason") or f"{mode} failed"
+        raise RuntimeError(detail)
+    return payload
 
 
 def review_row_from_queue(row: dict) -> dict:
@@ -2311,30 +2315,42 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
             meta_path = candidate_dir / "assumption-guard-v2-meta.json"
             report_path = candidate_dir / "assumption-guard-v2-report.json"
 
-            run_self_json_command(
-                "train",
-                "--overlay-training-data",
-                str(accepted_training_overlay),
-                "--overlay-training-data",
-                str(staged_training_overlay),
-                "--overlay-regression-cases",
-                str(accepted_regression_overlay),
-                "--overlay-regression-cases",
-                str(staged_regression_overlay),
-                "--overlay-replay-cases",
-                str(accepted_replay_overlay),
-                "--overlay-replay-cases",
-                str(staged_replay_overlay),
-                "--output-model",
-                str(model_path),
-                "--output-tokenizer",
-                str(tokenizer_path),
-                "--output-meta",
-                str(meta_path),
-                "--output-report",
-                str(report_path),
-                env_overrides={"ASSUMPTION_GUARD_DISABLE": "1"},
-            )
+            try:
+                run_self_json_command(
+                    "train",
+                    "--overlay-training-data",
+                    str(accepted_training_overlay),
+                    "--overlay-training-data",
+                    str(staged_training_overlay),
+                    "--overlay-regression-cases",
+                    str(accepted_regression_overlay),
+                    "--overlay-regression-cases",
+                    str(staged_regression_overlay),
+                    "--overlay-replay-cases",
+                    str(accepted_replay_overlay),
+                    "--overlay-replay-cases",
+                    str(staged_replay_overlay),
+                    "--output-model",
+                    str(model_path),
+                    "--output-tokenizer",
+                    str(tokenizer_path),
+                    "--output-meta",
+                    str(meta_path),
+                    "--output-report",
+                    str(report_path),
+                    env_overrides={"ASSUMPTION_GUARD_DISABLE": "1"},
+                )
+            except RuntimeError as exc:
+                payload = {
+                    "status": "captured",
+                    "promoted": promote_summary,
+                    "retrain": False,
+                    "reason": "train_failed",
+                    "error": str(exc),
+                }
+                if emit_output:
+                    print(json.dumps(payload))
+                return payload
 
             candidate_report = json.loads(report_path.read_text())
             fallback_report_path = current_report_path if current_report_path.exists() else DEFAULT_REPORT
@@ -2807,7 +2823,10 @@ def runtime_decision_for_text(text: str, predict_fn, threshold: float) -> dict:
 
 
 def baseline_pipeline(min_class_count: int):
-    if min_class_count < 2:
+    # Rare labels can be left with only two training examples after the fixed
+    # split. The simpler logistic baseline is more reliable than the calibrated
+    # SVM path in that case, especially on the packaged Python 3.9 install.
+    if min_class_count < 3:
         classifier = LogisticRegression(
             max_iter=2000,
             class_weight="balanced",
@@ -3164,6 +3183,22 @@ def choose_candidate(candidates: Sequence[dict]) -> dict:
     )
 
 
+def failed_candidate(name: str, kind: str, exc: Exception, regression_total: int, replay_total: int):
+    return {
+        "name": name,
+        "kind": kind,
+        "error": f"{type(exc).__name__}: {exc}",
+        "threshold": None,
+        "dev": {"confusion": {"block_recall": 0.0, "pass_recall": 0.0}},
+        "replay": {"block_recall": 0.0, "pass_recall": 0.0, "matched": 0, "total": replay_total, "rows": []},
+        "regression": {"matched": 0, "total": regression_total, "rows": []},
+        "threshold_search": [],
+        "false_negatives": [],
+        "false_positives": [],
+        "low_margin_examples": [],
+    }
+
+
 def export_transformer_to_onnx(candidate: dict, output_model: Path):
     model = candidate["model_object"].cpu()
     tokenizer = candidate["tokenizer"]
@@ -3303,16 +3338,27 @@ def command_train(argv: Sequence[str], *, emit_output: bool = True):
 
     candidates = []
     candidates.append(run_baseline_candidate(splits, regression_cases, replay_cases))
-    candidates.append(
-        train_transformer_candidate(
-            candidate_name="minilm_l6",
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            rows=splits,
-            args=args,
-            regression_cases=regression_cases,
-            replay_cases=replay_cases,
+    try:
+        candidates.append(
+            train_transformer_candidate(
+                candidate_name="minilm_l6",
+                model_name="sentence-transformers/all-MiniLM-L6-v2",
+                rows=splits,
+                args=args,
+                regression_cases=regression_cases,
+                replay_cases=replay_cases,
+            )
         )
-    )
+    except Exception as exc:  # pragma: no cover - exercised during manual runs
+        candidates.append(
+            failed_candidate(
+                name="minilm_l6",
+                kind="transformer",
+                exc=exc,
+                regression_total=len(regression_cases),
+                replay_total=len(replay_cases),
+            )
+        )
     if not args.skip_deberta:
         try:
             candidates.append(
@@ -3327,19 +3373,13 @@ def command_train(argv: Sequence[str], *, emit_output: bool = True):
             )
         except Exception as exc:  # pragma: no cover - exercised during manual runs
             candidates.append(
-                {
-                    "name": "deberta_v3_small",
-                    "kind": "transformer",
-                    "error": f"{type(exc).__name__}: {exc}",
-                    "threshold": None,
-                    "dev": {"confusion": {"block_recall": 0.0, "pass_recall": 0.0}},
-                    "replay": {"block_recall": 0.0, "pass_recall": 0.0, "matched": 0, "total": len(replay_cases), "rows": []},
-                    "regression": {"matched": 0, "total": len(regression_cases), "rows": []},
-                    "threshold_search": [],
-                    "false_negatives": [],
-                    "false_positives": [],
-                    "low_margin_examples": [],
-                }
+                failed_candidate(
+                    name="deberta_v3_small",
+                    kind="transformer",
+                    exc=exc,
+                    regression_total=len(regression_cases),
+                    replay_total=len(replay_cases),
+                )
             )
 
     selected = choose_candidate([candidate for candidate in candidates if "error" not in candidate])
@@ -3350,7 +3390,75 @@ def command_train(argv: Sequence[str], *, emit_output: bool = True):
             if candidate.get("kind") == "transformer" and "error" not in candidate
         ]
         if not transformer_candidates:
-            raise RuntimeError("No transformer candidate satisfied export requirements")
+            failure_report = {
+                "dataset": {
+                    "rows": len(rows),
+                    "train": len(splits.train),
+                    "dev": len(splits.dev),
+                    "test": len(splits.test),
+                    "overlay_rows": len(overlay_rows),
+                    "label_counts": {
+                        label: sum(1 for row in rows if row["intent"] == label) for label in v2.LABELS
+                    },
+                },
+                "candidates": [],
+                "selected_candidate": selected["name"],
+                "regression_results": {
+                    "matched": selected["regression"]["matched"],
+                    "total": selected["regression"]["total"],
+                    "rows": selected["regression"]["rows"],
+                },
+                "replay_results": {
+                    "matched": selected["replay"]["matched"],
+                    "total": selected["replay"]["total"],
+                    "block_recall": selected["replay"]["block_recall"],
+                    "pass_recall": selected["replay"]["pass_recall"],
+                    "targeted_family_accuracy": selected["replay"].get("targeted_family_accuracy", {}),
+                    "rows": selected["replay"]["rows"],
+                },
+                "evaluation": {
+                    "test_confusion": selected["test"]["confusion"],
+                    "per_intent": selected["test"].get("per_intent", {}),
+                    "false_negatives": selected.get("false_negatives", []),
+                    "false_positives": selected.get("false_positives", []),
+                    "low_margin_examples": selected.get("low_margin_examples", []),
+                },
+                "onnx_parity_max_abs_delta": None,
+                "latency": None,
+                "acceptance": {
+                    "meets_acceptance_bar": False,
+                    "reason": "no_transformer_candidate",
+                },
+            }
+            for candidate in candidates:
+                if "error" in candidate:
+                    failure_report["candidates"].append(candidate)
+                else:
+                    failure_report["candidates"].append(
+                        {
+                            "name": candidate["name"],
+                            "kind": candidate["kind"],
+                            "model_name": candidate.get("model_name"),
+                            "threshold": candidate["threshold"],
+                            "dev_confusion": candidate["dev"]["confusion"],
+                            "test_confusion": candidate["test"]["confusion"],
+                            "regression_matched": candidate["regression"]["matched"],
+                            "regression_total": candidate["regression"]["total"],
+                            "replay_block_recall": candidate["replay"]["block_recall"],
+                            "replay_pass_recall": candidate["replay"]["pass_recall"],
+                        }
+                    )
+            output_report.write_text(json.dumps(failure_report, indent=2))
+            payload = {
+                "status": "failed",
+                "reason": "no_transformer_candidate",
+                "selected_candidate": selected["name"],
+                "report": str(output_report),
+                "candidate_errors": [candidate["error"] for candidate in candidates if candidate.get("error")],
+            }
+            if emit_output:
+                print(json.dumps(payload))
+            return payload
         selected = max(
             transformer_candidates,
             key=lambda candidate: (

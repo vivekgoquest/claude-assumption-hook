@@ -455,6 +455,158 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             self.assertTrue(output_meta.exists())
             self.assertTrue(output_report.exists())
 
+    def test_baseline_pipeline_uses_logistic_regression_when_rarest_class_is_two(self):
+        runtime = load_runtime_module()
+        runtime.ensure_training_dependencies()
+        pipe = runtime.baseline_pipeline(2)
+        self.assertEqual(pipe.named_steps["clf"].__class__.__name__, "LogisticRegression")
+
+    def test_command_train_returns_structured_failure_when_no_transformer_candidate_is_available(self):
+        runtime = load_runtime_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            output_model = tmp / "model.onnx"
+            output_tokenizer = tmp / "tokenizer.json"
+            output_meta = tmp / "meta.json"
+            output_report = tmp / "report.json"
+
+            baseline_candidate = {
+                "name": "baseline_linear_svm",
+                "kind": "baseline",
+                "model_object": object(),
+                "threshold": 0.5,
+                "threshold_search": [],
+                "dev": {"confusion": {"block_recall": 1.0, "pass_recall": 1.0}},
+                "test": {"confusion": {"block_recall": 1.0, "pass_recall": 1.0}, "per_intent": {}},
+                "regression": {"matched": 1, "total": 1, "rows": []},
+                "replay": {
+                    "matched": 1,
+                    "total": 1,
+                    "block_recall": 1.0,
+                    "pass_recall": 1.0,
+                    "targeted_family_accuracy": {
+                        "verification_narration": 1.0,
+                        "dependency_gap_grounded": 1.0,
+                        "capability_promise_unverified": 1.0,
+                    },
+                    "rows": [],
+                },
+                "false_negatives": [],
+                "false_positives": [],
+                "low_margin_examples": [],
+            }
+
+            original_baseline = runtime.run_baseline_candidate
+            original_transformer = runtime.train_transformer_candidate
+            original_dependencies = runtime.ensure_training_dependencies
+            original_choose = runtime.choose_candidate
+            original_set_seed = runtime.set_seed
+            try:
+                runtime.ensure_training_dependencies = lambda: None
+                runtime.set_seed = lambda seed: None
+                runtime.run_baseline_candidate = lambda *args, **kwargs: baseline_candidate
+                runtime.train_transformer_candidate = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("transformers unavailable"))
+                runtime.choose_candidate = lambda candidates: candidates[0]
+                payload = runtime.command_train(
+                    [
+                        "--output-model",
+                        str(output_model),
+                        "--output-tokenizer",
+                        str(output_tokenizer),
+                        "--output-meta",
+                        str(output_meta),
+                        "--output-report",
+                        str(output_report),
+                    ],
+                    emit_output=False,
+                )
+            finally:
+                runtime.run_baseline_candidate = original_baseline
+                runtime.train_transformer_candidate = original_transformer
+                runtime.ensure_training_dependencies = original_dependencies
+                runtime.choose_candidate = original_choose
+                runtime.set_seed = original_set_seed
+
+            self.assertEqual(payload["status"], "failed")
+            self.assertEqual(payload["reason"], "no_transformer_candidate")
+            self.assertTrue(output_report.exists())
+            report = json.loads(output_report.read_text())
+            self.assertEqual(report["selected_candidate"], "baseline_linear_svm")
+            self.assertFalse(output_model.exists())
+
+    def test_learning_cycle_returns_structured_train_failure(self):
+        runtime = load_runtime_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_dir = tmp / "state"
+            queue_path = state_dir / "learning-queue.jsonl"
+            log_path = tmp / "assumption-guard.log.jsonl"
+            transcript_root = tmp / "projects"
+            transcript_root.mkdir(parents=True)
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            queue_path.write_text(json.dumps({"candidate_id": "candidate-a"}) + "\n")
+
+            original_review = runtime.review_rows_with_council
+            original_train = runtime.run_self_json_command
+            try:
+                pattern_families = [
+                    "verification_narration",
+                    "capability_promise_unverified",
+                    "dependency_gap_grounded",
+                    "reference_language",
+                    "describe_type",
+                ]
+                runtime.review_rows_with_council = lambda *args, **kwargs: {
+                    "consensus_rows": [
+                        {
+                            "candidate_id": f"candidate-{index}",
+                            "route": "staged_training",
+                            "final_intent": pattern_families[index % len(pattern_families)],
+                            "final_block": pattern_families[index % len(pattern_families)] in {"capability_promise_unverified"},
+                            "confidence": 0.96,
+                            "pattern_family": pattern_families[index % len(pattern_families)],
+                            "reviewer_ids": ["a", "b", "c"],
+                        }
+                        for index in range(20)
+                    ],
+                    "merged_rows": [
+                        {
+                            "candidate_id": f"candidate-{index}",
+                            "text": f"candidate text {index}",
+                            "final_intent": pattern_families[index % len(pattern_families)],
+                            "final_block": pattern_families[index % len(pattern_families)] in {"capability_promise_unverified"},
+                            "confidence": 0.96,
+                            "pattern_family": pattern_families[index % len(pattern_families)],
+                            "candidate_reason": "blocked_clause",
+                        }
+                        for index in range(20)
+                    ],
+                    "consolidated_rows": [],
+                }
+                runtime.run_self_json_command = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("train exploded"))
+                payload = runtime.command_learning_cycle(
+                    [
+                        "--state-dir",
+                        str(state_dir),
+                        "--queue-path",
+                        str(queue_path),
+                        "--log-path",
+                        str(log_path),
+                        "--transcript-root",
+                        str(transcript_root),
+                        "--min-review-batch",
+                        "1",
+                    ],
+                    emit_output=False,
+                )
+            finally:
+                runtime.review_rows_with_council = original_review
+                runtime.run_self_json_command = original_train
+
+            self.assertEqual(payload["status"], "captured")
+            self.assertEqual(payload["reason"], "train_failed")
+            self.assertFalse(payload["retrain"])
+
     def test_build_review_batch_merges_and_dedupes_queue_and_mined_rows(self):
         runtime = load_runtime_module()
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -197,6 +197,7 @@ TRIGGER_MODE = os.environ.get("ASSUMPTION_GUARD_TRIGGER_MODE", "post_append")
 TRIGGER_PYTHON = os.environ.get("ASSUMPTION_GUARD_TRIGGER_PYTHON", sys.executable)
 TRANSCRIPT_ROOT = os.environ.get("ASSUMPTION_GUARD_TRANSCRIPT_ROOT", os.path.join(CLAUDE_DIR, "projects"))
 REVIEW_CLAUDE_CMD = os.environ.get("ASSUMPTION_GUARD_REVIEW_CLAUDE_CMD", "claude")
+REVIEW_TIMEOUT_SECONDS = int(os.environ.get("ASSUMPTION_GUARD_REVIEW_TIMEOUT_SECONDS", "180"))
 DISABLE_HOOK = os.environ.get("ASSUMPTION_GUARD_DISABLE") == "1"
 PACKAGED_TRAINING_PYTHON = PACKAGE_DIR / ".train-venv" / "bin" / "python"
 TRAINING_PYTHON = (
@@ -1316,6 +1317,30 @@ def update_state_file(path: Path, state: dict, **updates):
     write_state_json(path, state)
 
 
+def complete_learning_cycle(paths: dict, payload: dict, *, emit_output: bool = True):
+    state = read_state_json(paths["review_state_path"])
+    update_state_file(
+        paths["review_state_path"],
+        state,
+        last_cycle_ts=datetime.now(timezone.utc).isoformat(),
+        last_cycle_status=payload.get("status"),
+        last_cycle_reason=payload.get("reason"),
+    )
+    return emit_payload(payload, emit_output)
+
+
+def fail_learning_cycle(paths: dict, reason: str, *, error: str, emit_output: bool = True):
+    state = read_state_json(paths["review_state_path"])
+    update_state_file(
+        paths["review_state_path"],
+        state,
+        last_failed_cycle_ts=datetime.now(timezone.utc).isoformat(),
+        last_failed_cycle_reason=reason,
+        last_failed_cycle_error=error,
+    )
+    return emit_payload(fail_payload(reason, status="failed", error=error), emit_output)
+
+
 def launch_learning_cycle(paths: dict, args, *, foreground: bool):
     command = self_command(
         "learning-cycle",
@@ -1666,6 +1691,35 @@ def parse_consolidator_output(raw_output: str, disputed_rows: Sequence[dict]):
     return parsed
 
 
+def extract_claude_json_result(raw_output: str):
+    text = raw_output.strip()
+    if not text:
+        raise ValueError("Claude reviewer returned empty stdout")
+    parsed = json.loads(text)
+    if isinstance(parsed, list):
+        return text
+    if not isinstance(parsed, dict):
+        raise ValueError("Claude reviewer output must be a JSON array or wrapper object")
+    result = parsed.get("result")
+    if isinstance(result, str):
+        result_text = result.strip()
+        if not result_text:
+            raise ValueError("Claude reviewer wrapper returned an empty result")
+        return result_text
+    if isinstance(result, list):
+        return json.dumps(result)
+    raise ValueError("Claude reviewer JSON wrapper missing a usable result payload")
+
+
+def quarantine_failure_paths(quarantine_dir: Path, quarantine_prefix: str):
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    base_name = f"{quarantine_prefix}-{timestamp}.failed"
+    return (
+        quarantine_dir / f"{base_name}.jsonl",
+        quarantine_dir / f"{base_name}.meta.json",
+    )
+
+
 def run_llm_json_round(
     input_rows: Sequence[dict],
     *,
@@ -1682,18 +1736,48 @@ def run_llm_json_round(
         return []
     prompt = prompt_builder(input_rows)
     last_error = None
+    last_details = None
     quarantine_dir.mkdir(parents=True, exist_ok=True)
-    for _ in range(2):
+    for attempt in range(2):
         try:
-            rows = parser(run_review_with_claude(claude_cmd, prompt), input_rows)
+            invocation = run_review_with_claude(claude_cmd, prompt)
+            last_details = {
+                **invocation,
+                "attempt": attempt + 1,
+                "quarantine_prefix": quarantine_prefix,
+            }
+            if invocation.get("timed_out"):
+                raise RuntimeError(f"Claude reviewer timed out after {REVIEW_TIMEOUT_SECONDS}s")
+            if invocation.get("returncode") != 0:
+                detail = (invocation.get("stderr") or invocation.get("stdout") or "").strip()
+                raise RuntimeError(detail or f"Claude exited with {invocation.get('returncode')}")
+            rows = parser(extract_claude_json_result(invocation["stdout"]), input_rows)
             if output_path is not None:
                 write_jsonl(output_path, rows)
             return rows
         except Exception as exc:  # pragma: no cover - exercised in manual runs
             last_error = exc
-    quarantine_path = quarantine_dir / f"{quarantine_prefix}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.failed.jsonl"
+            if last_details is None:
+                last_details = {"attempt": attempt + 1, "quarantine_prefix": quarantine_prefix}
+    quarantine_path, details_path = quarantine_failure_paths(quarantine_dir, quarantine_prefix)
     write_jsonl(quarantine_path, input_rows)
-    raise RuntimeError(json.dumps({"error": str(last_error), "quarantined": str(quarantine_path)}))
+    write_json(
+        details_path,
+        {
+            "error": str(last_error),
+            "attempts": 2,
+            **(last_details or {}),
+        },
+    )
+    raise RuntimeError(
+        json.dumps(
+            {
+                "error": str(last_error),
+                "quarantined": str(quarantine_path),
+                "details": str(details_path),
+            }
+        )
+    )
 
 
 def consolidate_disputed_rows(
@@ -1715,13 +1799,44 @@ def consolidate_disputed_rows(
 
 
 def run_review_with_claude(claude_cmd: str, prompt: str):
-    command = shlex.split(claude_cmd) + ["-p", prompt]
+    command = shlex.split(claude_cmd) + [
+        "--output-format",
+        "json",
+        "--tools",
+        "",
+        "--no-session-persistence",
+        "-p",
+        prompt,
+    ]
     env = os.environ.copy()
     env["ASSUMPTION_GUARD_DISABLE"] = "1"
-    result = subprocess.run(command, capture_output=True, text=True, check=False, env=env)
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or f"Claude exited with {result.returncode}")
-    return result.stdout.strip()
+    started_at = time.monotonic()
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+            timeout=REVIEW_TIMEOUT_SECONDS,
+        )
+        return {
+            "command": command,
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "elapsed_seconds": round(time.monotonic() - started_at, 3),
+            "timed_out": False,
+        }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "command": command,
+            "returncode": None,
+            "stdout": exc.stdout or "",
+            "stderr": exc.stderr or "",
+            "elapsed_seconds": round(time.monotonic() - started_at, 3),
+            "timed_out": True,
+        }
 
 
 def review_rows_with_claude(
@@ -2295,12 +2410,15 @@ def command_review(argv: Sequence[str], *, emit_output: bool = True):
     args = parse_command_args("review", argv)
     batch_path = Path(args.batch)
     rows = read_jsonl(batch_path)[: args.max_candidates]
-    reviewed = review_rows_with_claude(
-        rows,
-        claude_cmd=args.claude_cmd,
-        quarantine_dir=Path(args.quarantine_dir),
-        output_path=Path(args.output),
-    )
+    try:
+        reviewed = review_rows_with_claude(
+            rows,
+            claude_cmd=args.claude_cmd,
+            quarantine_dir=Path(args.quarantine_dir),
+            output_path=Path(args.output),
+        )
+    except RuntimeError as exc:
+        return emit_payload(fail_payload("review_failed", status="failed", error=str(exc)), emit_output)
     return emit_payload({"reviewed": len(reviewed), "output": args.output}, emit_output)
 
 
@@ -2386,7 +2504,7 @@ def command_maybe_trigger(argv: Sequence[str], *, emit_output: bool = True):
                 paths["review_state_path"],
                 state,
                 last_check_ts=now,
-                last_cycle_ts=now,
+                last_launch_ts=now,
                 last_trigger_reason=reason,
                 last_decision="launched",
                 **metrics,
@@ -2419,14 +2537,21 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
             write_jsonl(paths["review_batch_path"], review_rows)
             reason_counts = Counter(row.get("candidate_reason", "unknown") for row in review_rows)
             if len(review_rows) < args.min_review_batch and max(reason_counts.values(), default=0) < 3:
-                return emit_payload(fail_payload("insufficient_review_batch", rows=len(review_rows)), emit_output)
+                return complete_learning_cycle(
+                    paths,
+                    fail_payload("insufficient_review_batch", rows=len(review_rows)),
+                    emit_output=emit_output,
+                )
 
-            council_result = review_rows_with_council(
-                review_rows,
-                claude_cmd=args.claude_cmd,
-                quarantine_dir=paths["quarantine_dir"],
-                output_dir=paths["state_dir"],
-            )
+            try:
+                council_result = review_rows_with_council(
+                    review_rows,
+                    claude_cmd=args.claude_cmd,
+                    quarantine_dir=paths["quarantine_dir"],
+                    output_dir=paths["state_dir"],
+                )
+            except RuntimeError as exc:
+                return fail_learning_cycle(paths, "review_failed", error=str(exc), emit_output=emit_output)
             merged_rows = council_result["merged_rows"]
             append_unique_jsonl(paths["reviewed_path"], merged_rows, "candidate_id")
 
@@ -2439,7 +2564,8 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
             )
             health = review_batch_health_metrics(council_result["consensus_rows"])
             if not review_batch_is_healthy(health):
-                return emit_payload(
+                return complete_learning_cycle(
+                    paths,
                     fail_payload(
                         "unhealthy_review_batch",
                         status="captured",
@@ -2447,10 +2573,14 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
                         retrain=False,
                         health=health,
                     ),
-                    emit_output,
+                    emit_output=emit_output,
                 )
             if not should_retrain(promote_summary, merged_rows):
-                return emit_payload(success_payload("captured", promoted=promote_summary, retrain=False), emit_output)
+                return complete_learning_cycle(
+                    paths,
+                    success_payload("captured", promoted=promote_summary, retrain=False),
+                    emit_output=emit_output,
+                )
 
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             artifacts = candidate_artifact_paths(paths["candidates_root"], timestamp)
@@ -2459,7 +2589,8 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
             try:
                 train_candidate_artifacts(paths, args, artifacts)
             except RuntimeError as exc:
-                return emit_payload(
+                return complete_learning_cycle(
+                    paths,
                     fail_payload(
                         "train_failed",
                         status="captured",
@@ -2467,7 +2598,7 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
                         retrain=False,
                         error=str(exc),
                     ),
-                    emit_output,
+                    emit_output=emit_output,
                 )
 
             candidate_report = read_json(artifacts["report_path"])
@@ -2475,9 +2606,10 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
             current_report = read_json(Path(fallback_report_path))
             accepted, family_metrics = candidate_is_promotable(candidate_report, current_report)
             if not accepted:
-                return emit_payload(
+                return complete_learning_cycle(
+                    paths,
                     success_payload("trained", promoted=False, candidate_dir=str(artifacts["candidate_dir"])),
-                    emit_output,
+                    emit_output=emit_output,
                 )
 
             promote_candidate_assets(artifacts)
@@ -2495,14 +2627,15 @@ def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
                 "manifest_id",
             )
             write_json(paths["current_report_path"], candidate_report)
-            return emit_payload(
+            return complete_learning_cycle(
+                paths,
                 success_payload(
                     "promoted",
                     candidate_dir=str(artifacts["candidate_dir"]),
                     family_metrics=family_metrics,
                     advanced=advance_summary,
                 ),
-                emit_output,
+                emit_output=emit_output,
             )
     except FileExistsError:
         return emit_payload(

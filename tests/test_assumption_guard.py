@@ -685,6 +685,47 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             self.assertEqual(payload["reason"], "train_failed")
             self.assertFalse(payload["retrain"])
 
+    def test_learning_cycle_returns_structured_review_failure_without_cooldown_timestamp(self):
+        runtime = load_runtime_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_dir = tmp / "state"
+            queue_path = state_dir / "learning-queue.jsonl"
+            log_path = tmp / "assumption-guard.log.jsonl"
+            transcript_root = tmp / "projects"
+            transcript_root.mkdir(parents=True)
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            queue_path.write_text(json.dumps({"candidate_id": "candidate-a"}) + "\n")
+
+            original_review = runtime.review_rows_with_council
+            try:
+                runtime.review_rows_with_council = lambda *args, **kwargs: (_ for _ in ()).throw(
+                    RuntimeError("review exploded")
+                )
+                payload = runtime.command_learning_cycle(
+                    [
+                        "--state-dir",
+                        str(state_dir),
+                        "--queue-path",
+                        str(queue_path),
+                        "--log-path",
+                        str(log_path),
+                        "--transcript-root",
+                        str(transcript_root),
+                        "--min-review-batch",
+                        "1",
+                    ],
+                    emit_output=False,
+                )
+            finally:
+                runtime.review_rows_with_council = original_review
+
+            self.assertEqual(payload["status"], "failed")
+            self.assertEqual(payload["reason"], "review_failed")
+            review_state = json.loads((state_dir / "review-state.json").read_text())
+            self.assertIn("last_failed_cycle_ts", review_state)
+            self.assertNotIn("last_cycle_ts", review_state)
+
     def test_command_maybe_trigger_skip_payload_shape(self):
         runtime = load_runtime_module()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -712,6 +753,69 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             self.assertIn("largest_reason_cluster", payload)
             self.assertIn("largest_family_cluster", payload)
             self.assertIn("oldest_pending_age_seconds", payload)
+
+    def test_command_maybe_trigger_records_launch_without_last_cycle_timestamp(self):
+        runtime = load_runtime_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_dir = tmp / "state"
+            queue_path = state_dir / "learning-queue.jsonl"
+            reviewed_path = state_dir / "reviewed-claude.jsonl"
+            review_state_path = state_dir / "review-state.json"
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            queue_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "candidate_id": "candidate-a",
+                                "candidate_hash": "hash-a",
+                                "candidate_reason": "blocked_clause",
+                                "intent": "capability_promise_unverified",
+                                "ts": "2026-03-18T00:00:00+00:00",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "candidate_id": "candidate-b",
+                                "candidate_hash": "hash-b",
+                                "candidate_reason": "blocked_clause",
+                                "intent": "capability_promise_unverified",
+                                "ts": "2026-03-18T00:00:00+00:00",
+                            }
+                        ),
+                    ]
+                )
+                + "\n"
+            )
+
+            original_launch = runtime.launch_learning_cycle
+            try:
+                runtime.launch_learning_cycle = lambda *args, **kwargs: {"mode": "detached", "log_path": "/tmp/fake.log"}
+                payload = runtime.command_maybe_trigger(
+                    [
+                        "--state-dir",
+                        str(state_dir),
+                        "--queue-path",
+                        str(queue_path),
+                        "--reviewed-path",
+                        str(reviewed_path),
+                        "--review-state-path",
+                        str(review_state_path),
+                        "--pending-threshold",
+                        "2",
+                        "--cooldown-seconds",
+                        "0",
+                    ],
+                    emit_output=False,
+                )
+            finally:
+                runtime.launch_learning_cycle = original_launch
+
+            self.assertEqual(payload["status"], "launched")
+            review_state = json.loads(review_state_path.read_text())
+            self.assertIn("last_launch_ts", review_state)
+            self.assertNotIn("last_cycle_ts", review_state)
 
     def test_learning_cycle_passes_training_python_to_train_subprocess(self):
         runtime = load_runtime_module()
@@ -943,6 +1047,81 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             review.parse_review_output(extra_key, input_rows)
+
+    def test_extract_claude_json_result_accepts_cli_wrapper(self):
+        review = load_runtime_module()
+        wrapper = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": json.dumps(
+                    [
+                        {
+                            "candidate_id": "candidate-a",
+                            "final_intent": "verification_narration",
+                            "final_block": False,
+                            "confidence": 0.91,
+                            "rationale": "The clause says it will verify now.",
+                            "pattern_family": "verification_narration",
+                        }
+                    ]
+                ),
+            }
+        )
+        extracted = review.extract_claude_json_result(wrapper)
+        self.assertEqual(
+            json.loads(extracted),
+            [
+                {
+                    "candidate_id": "candidate-a",
+                    "final_intent": "verification_narration",
+                    "final_block": False,
+                    "confidence": 0.91,
+                    "rationale": "The clause says it will verify now.",
+                    "pattern_family": "verification_narration",
+                }
+            ],
+        )
+
+    def test_review_rows_with_claude_quarantine_includes_subprocess_diagnostics(self):
+        review = load_runtime_module()
+        input_rows = [
+            {
+                "id": "candidate-a",
+                "text": "But if you want to revert, I can check which ones are new and remove them.",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            quarantine_dir = Path(tmpdir) / "quarantine"
+            original_runner = review.run_review_with_claude
+            try:
+                review.run_review_with_claude = lambda *args, **kwargs: {
+                    "command": ["claude", "--output-format", "json"],
+                    "returncode": 0,
+                    "stdout": "",
+                    "stderr": "",
+                    "elapsed_seconds": 0.25,
+                    "timed_out": False,
+                }
+                with self.assertRaises(RuntimeError) as ctx:
+                    review.review_rows_with_claude(
+                        input_rows,
+                        claude_cmd="claude",
+                        quarantine_dir=quarantine_dir,
+                    )
+            finally:
+                review.run_review_with_claude = original_runner
+
+            payload = json.loads(str(ctx.exception))
+            quarantined_path = Path(payload["quarantined"])
+            details_path = Path(payload["details"])
+            self.assertTrue(quarantined_path.exists())
+            self.assertTrue(details_path.exists())
+            details = json.loads(details_path.read_text())
+            self.assertEqual(details["returncode"], 0)
+            self.assertEqual(details["stdout"], "")
+            self.assertEqual(details["stderr"], "")
+            self.assertEqual(details["attempts"], 2)
 
     def test_promote_reviewed_rows_stage_rows_without_touching_accepted(self):
         review = load_runtime_module()
@@ -1660,6 +1839,9 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             self.assertFalse(payload["retrain"])
             self.assertEqual(payload["reason"], "unhealthy_review_batch")
             self.assertIn("health", payload)
+            review_state = json.loads((state_dir / "review-state.json").read_text())
+            self.assertEqual(review_state["last_cycle_status"], "captured")
+            self.assertIn("last_cycle_ts", review_state)
 
     def test_maybe_trigger_uses_pending_rows_not_total_queue_size(self):
         with tempfile.TemporaryDirectory() as tmpdir:

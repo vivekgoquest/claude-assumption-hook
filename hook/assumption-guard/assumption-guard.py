@@ -200,7 +200,13 @@ TRIGGER_PYTHON = os.environ.get("ASSUMPTION_GUARD_TRIGGER_PYTHON", sys.executabl
 TRANSCRIPT_ROOT = os.environ.get("ASSUMPTION_GUARD_TRANSCRIPT_ROOT", os.path.join(CLAUDE_DIR, "projects"))
 REVIEW_CLAUDE_CMD = os.environ.get("ASSUMPTION_GUARD_REVIEW_CLAUDE_CMD", "claude")
 DISABLE_HOOK = os.environ.get("ASSUMPTION_GUARD_DISABLE") == "1"
-TRAINING_PYTHON = os.environ.get("ASSUMPTION_GUARD_TRAIN_PYTHON") or shutil.which("python3.11") or sys.executable
+PACKAGED_TRAINING_PYTHON = PACKAGE_DIR / ".train-venv" / "bin" / "python"
+TRAINING_PYTHON = (
+    os.environ.get("ASSUMPTION_GUARD_TRAIN_PYTHON")
+    or (str(PACKAGED_TRAINING_PYTHON) if PACKAGED_TRAINING_PYTHON.exists() else None)
+    or shutil.which("python3.11")
+    or sys.executable
+)
 JUDGEMENT_PASS_LABELS = {
     "verification_narration",
     "verified_limitation",

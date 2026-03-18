@@ -328,6 +328,28 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
         self.assertEqual(Path(runtime.LOG_PATH), HOOK_PACKAGE_DIR / "state" / "assumption-guard.log.jsonl")
         self.assertEqual(Path(runtime.QUEUE_PATH), HOOK_PACKAGE_DIR / "state" / "learning-queue.jsonl")
 
+    def test_packaged_runtime_prefers_bundled_training_venv(self):
+        train_python = HOOK_PACKAGE_DIR / ".train-venv" / "bin" / "python"
+        created_parent = False
+        original_contents = train_python.read_text() if train_python.exists() else None
+        try:
+            train_python.parent.mkdir(parents=True, exist_ok=True)
+            created_parent = True
+            train_python.write_text("#!/usr/bin/env python3\n")
+            runtime = load_runtime_module()
+            self.assertEqual(runtime.TRAINING_PYTHON, str(train_python))
+        finally:
+            if original_contents is None:
+                train_python.unlink(missing_ok=True)
+                if created_parent:
+                    try:
+                        train_python.parent.rmdir()
+                        train_python.parent.parent.rmdir()
+                    except OSError:
+                        pass
+            else:
+                train_python.write_text(original_contents)
+
     def test_settings_snippet_points_to_packaged_script(self):
         settings = json.loads((HOOK_PACKAGE_DIR / "settings-snippet.json").read_text())
         command = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
@@ -379,6 +401,7 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             self.assertTrue(installed_settings_snippet.exists())
             self.assertTrue((installed_dir / "baseline" / "assumption-guard-training-labeled.jsonl").exists())
             self.assertTrue((installed_dir / "state").exists())
+            self.assertTrue((installed_dir / ".train-venv" / "bin" / "python").exists())
 
             merged_settings = json.loads(settings_path.read_text())
             self.assertEqual(merged_settings["theme"], "dark")

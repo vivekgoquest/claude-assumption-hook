@@ -80,6 +80,7 @@ The installer:
 
 - copies `hook/assumption-guard/` into `~/.claude/hooks/assumption-guard/`
 - creates `~/.claude/hooks/assumption-guard/state/`
+- creates `~/.claude/hooks/assumption-guard/.train-venv/` with `python3.11 --system-site-packages` when `python3.11` is available
 - adds the Stop hook command to `~/.claude/settings.json` without removing unrelated settings
 
 The installed Stop hook command is:
@@ -87,6 +88,8 @@ The installed Stop hook command is:
 ```bash
 python3 ~/.claude/hooks/assumption-guard/assumption-guard.py
 ```
+
+Live enforcement stays on `python3`. Background retraining prefers the bundled `.train-venv/bin/python` automatically, and falls back to `python3.11` only when that packaged venv is not present.
 
 Then start a new Claude Code session.
 
@@ -102,6 +105,7 @@ hook/
     ├── assumption-guard.py
     ├── install.sh
     ├── settings-snippet.json
+    ├── .train-venv/
     ├── assumption-guard-v2.onnx
     ├── assumption-guard-v2-tokenizer.json
     ├── assumption-guard-v2-meta.json
@@ -194,6 +198,13 @@ python3.11 hook/assumption-guard/assumption-guard.py replay \
   --tokenizer hook/assumption-guard/assumption-guard-v2-tokenizer.json \
   --meta hook/assumption-guard/assumption-guard-v2-meta.json \
   --output /tmp/assumption-guard-replay.json
+```
+
+For installed-package maintenance, prefer the bundled training interpreter:
+
+```bash
+~/.claude/hooks/assumption-guard/.train-venv/bin/python \
+  ~/.claude/hooks/assumption-guard/assumption-guard.py train
 ```
 
 ## Current Model

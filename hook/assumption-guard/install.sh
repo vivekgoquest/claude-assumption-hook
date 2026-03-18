@@ -8,8 +8,11 @@ CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 HOOKS_DIR="$CLAUDE_DIR/hooks"
 TARGET_DIR="$HOOKS_DIR/$PACKAGE_NAME"
 STATE_DIR="$TARGET_DIR/state"
+TRAINING_VENV_DIR="$TARGET_DIR/.train-venv"
 SETTINGS_PATH="$CLAUDE_DIR/settings.json"
 COMMAND="python3 ~/.claude/hooks/assumption-guard/assumption-guard.py"
+TRAINING_VENV_ENABLED="${ASSUMPTION_GUARD_BOOTSTRAP_TRAINING_VENV:-1}"
+TRAINING_BASE_PYTHON="${ASSUMPTION_GUARD_BOOTSTRAP_PYTHON:-$(command -v python3.11 || true)}"
 
 mkdir -p "$HOOKS_DIR"
 
@@ -25,6 +28,20 @@ else
 fi
 
 mkdir -p "$STATE_DIR"
+
+TRAINING_VENV_STATUS="skipped"
+if [ "$TRAINING_VENV_ENABLED" = "1" ]; then
+  if [ -n "$TRAINING_BASE_PYTHON" ]; then
+    if [ ! -x "$TRAINING_VENV_DIR/bin/python" ]; then
+      "$TRAINING_BASE_PYTHON" -m venv --system-site-packages "$TRAINING_VENV_DIR"
+      TRAINING_VENV_STATUS="created"
+    else
+      TRAINING_VENV_STATUS="reused"
+    fi
+  else
+    TRAINING_VENV_STATUS="python3.11_not_found"
+  fi
+fi
 
 python3 - "$SETTINGS_PATH" "$COMMAND" <<'PY'
 import json
@@ -81,4 +98,7 @@ Stop hook command:
 
 Mutable runtime state lives in:
   $STATE_DIR
+
+Training interpreter:
+  $TRAINING_VENV_DIR/bin/python ($TRAINING_VENV_STATUS)
 EOF

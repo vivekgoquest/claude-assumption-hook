@@ -93,6 +93,8 @@ The current checked-in v2 training path uses:
 - `scikit-learn`
 - `rapidfuzz`
 
+The installed package keeps live enforcement on `python3`, but background retraining should run through the packaged training interpreter at `~/.claude/hooks/assumption-guard/.train-venv/bin/python`. The installer creates that venv with `python3.11 --system-site-packages` when `python3.11` is available, which avoids the dependency drift in the live Python 3.9 environment.
+
 Candidate families trained by `hook/assumption-guard/assumption-guard.py train`:
 
 1. baseline: hashed TF-IDF + adaptive calibrated linear SVM fallback
@@ -105,6 +107,13 @@ Run from the repo root:
 
 ```bash
 python3.11 hook/assumption-guard/assumption-guard.py train
+```
+
+On an installed hook, use:
+
+```bash
+~/.claude/hooks/assumption-guard/.train-venv/bin/python \
+  ~/.claude/hooks/assumption-guard/assumption-guard.py train
 ```
 
 The script will:

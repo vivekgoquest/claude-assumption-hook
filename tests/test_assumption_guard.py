@@ -155,6 +155,31 @@ class AssumptionGuardRuntimeTests(unittest.TestCase):
         self.assertIn("Maybe rename this helper to be clearer", payload["reason"])
         self.assertIn("recommend_unverified", payload["reason"])
 
+    def test_verification_narration_and_grounded_limitations_follow_policy(self):
+        verification_narration = (
+            "Let me verify whether I can actually identify the new videos and remove them."
+        )
+        grounded_limitation = (
+            "I confirmed DELETE /videos/bulk exists and requires ids. "
+            "But without a saved list of the newly created ids, I can't selectively remove them."
+        )
+        unsupported_capability = (
+            "But if you want to revert, I can check which ones are new and remove them."
+        )
+
+        result, _ = run_hook(verification_narration)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "", result.stdout)
+
+        result, _ = run_hook(grounded_limitation)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "", result.stdout)
+
+        result, _ = run_hook(unsupported_capability)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["decision"], "block")
+
     def test_missing_onnx_dependencies_fall_back_to_regex_only(self):
         result, log_entries = run_hook(
             "I think the timeout is 30 seconds",

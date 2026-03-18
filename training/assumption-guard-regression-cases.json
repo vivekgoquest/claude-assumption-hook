@@ -334,5 +334,23 @@
     "text": "I need to verify the LTV math.",
     "expected_block": true,
     "reason": "live transcript unchecked limitation"
+  },
+  {
+    "group": "reference_language",
+    "text": "Let me verify whether I can actually identify the new videos and remove them.",
+    "expected_block": false,
+    "reason": "verification narration should be allowed"
+  },
+  {
+    "group": "recommend_unverified",
+    "text": "But if you want to revert, I can check which ones are new and remove them.",
+    "expected_block": true,
+    "reason": "unsupported capability promise should still block"
+  },
+  {
+    "group": "verified_limitation",
+    "text": "I confirmed DELETE /videos/bulk exists and requires ids. But without a saved list of the newly created ids, I can't selectively remove them.",
+    "expected_block": false,
+    "reason": "grounded limitation after verified evidence should pass"
   }
 ]

@@ -110,6 +110,17 @@ LIMITATION_PATTERN = re.compile(
     r"have not looked at|didn't look at|did not look at)\b",
     re.IGNORECASE,
 )
+VERIFICATION_NARRATION = re.compile(
+    r"^\s*(let me|i(?:'ll| will)|i(?:'m| am) going to)\s+"
+    r"(verify|check|confirm|inspect|test|look(?:\s+into)?|see)\s+(if|whether)\b",
+    re.IGNORECASE,
+)
+DEPENDENCY_GAP_LIMITATION = re.compile(
+    r"^\s*(but\s+)?without\s+"
+    r"(?!checking\b|running\b|verifying\b|looking\b|testing\b|searching\b|reviewing\b|confirming\b)"
+    r"[^.]{1,160}\bI\s+can(?:not|'t)\b",
+    re.IGNORECASE,
+)
 ARCHITECTURE_NOUNS = re.compile(
     r"\b(TypeScript|JavaScript|redis|staging|production|"
     r"state machine|queue worker|service|shared module)\b",
@@ -326,13 +337,15 @@ def strip_inline_literals(text: str) -> str:
     return text
 
 
-def hard_pass_intent(clause: str) -> Optional[str]:
+def hard_pass_intent(clause: str, previous_had_evidence: bool = False) -> Optional[str]:
     stripped = clause.strip()
     lowered = stripped.lower()
     if not stripped:
         return "reference_language"
     if stripped.startswith("```") or COMMENT_LINE.match(stripped):
         return "code_content"
+    if VERIFICATION_NARRATION.match(stripped):
+        return "reference_language"
     if META_REPORT_PATTERN.search(lowered):
         return "reference_language"
     if lowered.startswith("the hook flagged ") or lowered.startswith("the hook blocked "):
@@ -380,7 +393,11 @@ def hard_pass_intent(clause: str) -> Optional[str]:
         re.IGNORECASE,
     ):
         return "idiomatic_compare"
-    if EVIDENCE_PATTERN.search(stripped) and LIMITATION_PATTERN.search(stripped):
+    if EVIDENCE_PATTERN.search(stripped) and (
+        LIMITATION_PATTERN.search(stripped) or DEPENDENCY_GAP_LIMITATION.search(stripped)
+    ):
+        return "verified_limitation"
+    if previous_had_evidence and DEPENDENCY_GAP_LIMITATION.search(stripped):
         return "verified_limitation"
     if EVIDENCE_PATTERN.search(stripped) and RECOMMENDATION_HINT.search(stripped):
         return "recommend_supported"
@@ -443,7 +460,7 @@ def evaluate_text(text: str, classifier: Optional[OnnxIntentClassifier] = None) 
             previous_clause = clause
             previous_had_evidence = False
             continue
-        hard_pass = hard_pass_intent(clause)
+        hard_pass = hard_pass_intent(clause, previous_had_evidence=previous_had_evidence)
         if hard_pass:
             previous_had_evidence = bool(EVIDENCE_PATTERN.search(clause))
             previous_clause = clause

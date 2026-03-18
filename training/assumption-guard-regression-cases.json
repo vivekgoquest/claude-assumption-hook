@@ -1,0 +1,62 @@
+[
+  {
+    "text": "Maybe rename this helper to be clearer",
+    "expected_block": true,
+    "reason": "unverified recommendation"
+  },
+  {
+    "text": "This could be simplified by extracting a helper",
+    "expected_block": true,
+    "reason": "speculative improvement claim"
+  },
+  {
+    "text": "We should probably add a unit test here",
+    "expected_block": true,
+    "reason": "uncertain recommendation"
+  },
+  {
+    "text": "I'm not sure because I have not checked the config yet",
+    "expected_block": true,
+    "reason": "explicitly unchecked claim"
+  },
+  {
+    "text": "I have not checked the external API documentation for this",
+    "expected_block": true,
+    "reason": "unverified limitation"
+  },
+  {
+    "text": "I checked package.json and requirements.txt and cannot confirm the config value from this repo.",
+    "expected_block": false,
+    "reason": "verified limitation"
+  },
+  {
+    "text": "The app probably listens on port 3000",
+    "expected_block": true,
+    "reason": "factual guess"
+  },
+  {
+    "text": "I think this migration already ran in production",
+    "expected_block": true,
+    "reason": "first-person unverified assertion"
+  },
+  {
+    "text": "The hook flagged \"probably\" in the response",
+    "expected_block": false,
+    "reason": "meta discussion"
+  },
+  {
+    "text": "The return value could be None or a string",
+    "expected_block": false,
+    "reason": "type description"
+  },
+  {
+    "text": "When the cache is cold, this may take longer",
+    "expected_block": false,
+    "reason": "conditional reasoning"
+  },
+  {
+    "text": "Use map rather than forEach here",
+    "expected_block": false,
+    "reason": "idiomatic comparison"
+  }
+]

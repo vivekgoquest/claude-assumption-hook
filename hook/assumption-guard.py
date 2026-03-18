@@ -2,12 +2,13 @@
 """
 Assumption Guard Hook for Claude Code.
 
-A Stop hook that detects hedging/assumption language in Claude's responses
-and blocks until Claude verifies each claim using its tools.
+A Stop hook that detects unverified uncertainty in Claude's responses and
+blocks until Claude verifies the statement with its tools.
 
-Two-stage detection: regex pre-filter (fast) → ML classifier (accurate).
-The classifier filters out false positives: quotations, idioms, type analysis,
-conditionals, code content, and acknowledged limitations.
+Two-stage detection: regex pre-filter (fast) -> optional ML classifier
+(more precise). The classifier filters out false positives such as
+quotations, idioms, type analysis, conditionals, code content, and
+verified limitations that already explain what was checked.
 """
 
 import json
@@ -17,19 +18,16 @@ import re
 import sys
 from datetime import datetime, timezone
 
-import numpy as np
-from scipy.sparse import hstack, csr_matrix
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.feature_extraction.text import TfidfVectorizer
 
 # ============================================================================
-# HEDGING PATTERNS — All 8 categories, \b-bounded, hardcoded
+# HEDGING / UNVERIFIED LANGUAGE PATTERNS — stdlib only, always available
 # ============================================================================
 
 PATTERNS = [
     # Category 1: Epistemic modals
     r"\b(likely|unlikely|probably|possibly|perhaps|maybe|conceivably)\b",
-    r"\b(might|may|could)\s+(be|have|cause|lead|result|work|mean|indicate)",
+    r"\b(might|may|could)\s+(be|have|cause|lead|result|work|mean|indicate|"
+    r"simplify|improve|clarify|help|reduce)\b",
 
     # Category 2: Shields
     r"\b(I think|I believe|I suppose|I imagine|I suspect|I expect)\b",
@@ -65,139 +63,171 @@ PATTERNS = [
     r"\b(if I recall correctly|from what I remember)\b",
     r"\b(as of my last update|based on my training)\b",
     r"\b(to the best of my knowledge|to my knowledge)\b",
+
+    # Category 9: Explicitly unchecked / unverifiable-yet language
+    r"\b(have not|haven't|did not|didn't)\s+(checked|verified|confirmed|"
+    r"reviewed|read|looked at|inspected|tested|searched)\b",
+    r"\b(cannot|can't|could not|couldn't)\s+(confirm|determine|verify)\b",
+    r"\b(do not|don't)\s+know\b",
+    r"\b(requires?|needs?)\s+(running|checking|verifying|testing)\b",
 ]
 
-COMPILED_PATTERNS = [re.compile(p, re.IGNORECASE) for p in PATTERNS]
+COMPILED_PATTERNS = [re.compile(pattern, re.IGNORECASE) for pattern in PATTERNS]
 
-MODEL_PATH = os.path.join(os.path.expanduser("~"), ".claude", "assumption-guard-model.pkl")
-LOG_PATH = os.path.join(os.path.expanduser("~"), ".claude", "assumption-guard.log.jsonl")
+CLAUDE_DIR = os.path.join(os.path.expanduser("~"), ".claude")
+MODEL_PATH = os.environ.get(
+    "ASSUMPTION_GUARD_MODEL_PATH",
+    os.path.join(CLAUDE_DIR, "assumption-guard-model.pkl"),
+)
+LOG_PATH = os.environ.get(
+    "ASSUMPTION_GUARD_LOG_PATH",
+    os.path.join(CLAUDE_DIR, "assumption-guard.log.jsonl"),
+)
 
 
 # ============================================================================
-# ML MODEL CLASSES — must be defined here so pickle can deserialize them
+# OPTIONAL ML RUNTIME — loaded lazily so regex-only mode always works
 # ============================================================================
 
-class IntentFeatures(BaseEstimator, TransformerMixin):
-    """Extract structural features that signal speaker intent."""
+_ML_READY = None
+_ML_IMPORT_ERROR = None
+_MODEL = None
+_MODEL_STATUS = None
+_MODEL_LOAD_ATTEMPTED = False
 
-    HEDGING_WORDS = re.compile(
-        r"\b(I think|I believe|I suspect|I assume|I presume|probably|likely|"
-        r"unlikely|possibly|perhaps|maybe|conceivably|seemingly|apparently|"
-        r"might be|could be|may be|it seems|it appears|it looks like|"
-        r"it sounds like|fairly|rather|relatively|somewhat|kind of|sort of|"
-        r"about \d|around \d|approximately|roughly)\b", re.IGNORECASE
-    )
-    META_WORDS = re.compile(
-        r"\b(flagged|detected|pattern|regex|hook|blocked|caught|triggered|"
-        r"matched|classified|filter|false.positive|category|example)\b", re.IGNORECASE
-    )
-    TYPE_WORDS = re.compile(
-        r"\b(null|None|undefined|nil|string|number|int|float|bool|boolean|"
-        r"array|list|dict|map|optional|type|return|throw|resolve|reject|"
-        r"yield|emit)\b"
-    )
-    CONDITIONAL_START = re.compile(
-        r"^\s*(if |unless |without |when |removing |with )", re.IGNORECASE
-    )
-
-    def fit(self, X, y=None):
-        return self
-
-    def transform(self, X):
-        features = []
-        for text in X:
-            f = []
-            stripped = text.strip()
-            f.append(1.0 if stripped.startswith("|") and "|" in stripped[1:] else 0.0)
-            f.append(1.0 if stripped.startswith(("#", "//", "/*", "```")) else 0.0)
-            f.append(1.0 if '`' in text and self.HEDGING_WORDS.search(
-                re.sub(r'`[^`]*`', '', text)) is None else 0.0)
-            f.append(1.0 if self.META_WORDS.search(text) else 0.0)
-            f.append(1.0 if self.TYPE_WORDS.search(text) else 0.0)
-            f.append(1.0 if self.CONDITIONAL_START.match(stripped) else 0.0)
-            in_quotes = 0
-            for m in self.HEDGING_WORDS.finditer(text):
-                before = text[:m.start()]
-                if before.count('"') % 2 or before.count("'") % 2:
-                    in_quotes += 1
-            f.append(1.0 if in_quotes > 0 else 0.0)
-            f.append(min(len(self.HEDGING_WORDS.findall(text)) / 3.0, 1.0))
-            f.append(min(len(text) / 200.0, 1.0))
-            f.append(1.0 if re.match(
-                r"^\s*(I think|I believe|I suspect|I assume|I presume|I expect|"
-                r"I feel|I imagine|I suppose|My understanding)",
-                text, re.IGNORECASE) else 0.0)
-            features.append(f)
-        return csr_matrix(np.array(features))
+CombinedFeatures = None
+IntentFeatures = None
+_MODEL_MODULE = None
 
 
-class CombinedFeatures(BaseEstimator, TransformerMixin):
-    """TF-IDF + intent-signal features."""
+def initialize_ml(raise_on_error=False):
+    """Load optional ML dependencies and define feature classes lazily."""
+    global _ML_READY, _ML_IMPORT_ERROR, CombinedFeatures, IntentFeatures, _MODEL_MODULE
 
-    def __init__(self):
-        self.tfidf = TfidfVectorizer(
-            ngram_range=(1, 3), max_features=5000,
-            sublinear_tf=True, strip_accents="unicode",
-        )
-        self.intent = IntentFeatures()
+    if _ML_READY is not None:
+        if not _ML_READY and raise_on_error and _ML_IMPORT_ERROR is not None:
+            raise _ML_IMPORT_ERROR
+        return _ML_READY
 
-    def fit(self, X, y=None):
-        self.tfidf.fit(X)
-        self.intent.fit(X)
-        return self
+    try:
+        hook_dir = os.path.dirname(__file__)
+        if hook_dir not in sys.path:
+            sys.path.insert(0, hook_dir)
+        import assumption_guard_model as model_module  # pylint: disable=import-outside-toplevel
+    except Exception as exc:  # pragma: no cover - exercised in subprocess tests
+        _ML_READY = False
+        _ML_IMPORT_ERROR = exc
+        if raise_on_error:
+            raise
+        return False
 
-    def transform(self, X):
-        return hstack([self.tfidf.transform(X), self.intent.transform(X)])
+    _MODEL_MODULE = model_module
+    CombinedFeatures = model_module.CombinedFeatures
+    IntentFeatures = model_module.IntentFeatures
+    _ML_READY = True
+    return True
 
 
-# Load ML model once at import time
-_model = None
+def build_pipeline():
+    """Create a fresh sklearn pipeline for training or evaluation."""
+    initialize_ml(raise_on_error=True)
+    return _MODEL_MODULE.build_pipeline()
+
+
+def model_status(ml_available, fallback_reason=None, error_stage=None, error_detail=None):
+    return {
+        "ml_available": ml_available,
+        "fallback_reason": fallback_reason,
+        "error_stage": error_stage,
+        "error_detail": error_detail,
+    }
 
 
 def get_model():
-    global _model
-    if _model is None and os.path.exists(MODEL_PATH):
-        try:
-            with open(MODEL_PATH, "rb") as f:
-                _model = pickle.load(f)
-        except Exception:
-            pass
-    return _model
+    """Load the ML model once and record why fallback happened if it fails."""
+    global _MODEL, _MODEL_STATUS, _MODEL_LOAD_ATTEMPTED
 
+    if _MODEL_LOAD_ATTEMPTED:
+        return _MODEL, dict(_MODEL_STATUS)
+
+    _MODEL_LOAD_ATTEMPTED = True
+
+    if not initialize_ml():
+        _MODEL_STATUS = model_status(
+            False,
+            fallback_reason="ml_import_error",
+            error_stage="ml_import",
+            error_detail=f"{type(_ML_IMPORT_ERROR).__name__}: {_ML_IMPORT_ERROR}",
+        )
+        return None, dict(_MODEL_STATUS)
+
+    if not os.path.exists(MODEL_PATH):
+        _MODEL_STATUS = model_status(
+            False,
+            fallback_reason="model_missing",
+            error_stage="model_load",
+            error_detail=f"missing model at {MODEL_PATH}",
+        )
+        return None, dict(_MODEL_STATUS)
+
+    try:
+        with open(MODEL_PATH, "rb") as file_obj:
+            _MODEL = pickle.load(file_obj)
+    except Exception as exc:  # pragma: no cover - exercised in subprocess tests
+        _MODEL_STATUS = model_status(
+            False,
+            fallback_reason="pickle_load_error",
+            error_stage="model_load",
+            error_detail=f"{type(exc).__name__}: {exc}",
+        )
+        return None, dict(_MODEL_STATUS)
+
+    _MODEL_STATUS = model_status(True)
+    return _MODEL, dict(_MODEL_STATUS)
+
+
+# ============================================================================
+# TRANSCRIPT AND DETECTION HELPERS
+# ============================================================================
 
 def read_jsonl(path):
-    """Read a JSONL file and return list of parsed JSON objects."""
+    """Read a JSONL file and return parsed JSON objects."""
     entries = []
-    with open(path, "r") as f:
-        for line in f:
+    with open(path, "r", encoding="utf-8") as file_obj:
+        for line in file_obj:
             line = line.strip()
-            if line:
-                try:
-                    entries.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
     return entries
 
 
 def find_last_user_text_index(entries):
-    """Find the index of the last user text message (not tool_result)."""
-    for i in range(len(entries) - 1, -1, -1):
-        entry = entries[i]
+    """Find the last user-authored text message (not tool_result)."""
+    for index in range(len(entries) - 1, -1, -1):
+        entry = entries[index]
         if entry.get("type") != "user":
             continue
-        msg = entry.get("message", {})
-        content = msg.get("content", "")
+        message = entry.get("message", {})
+        content = message.get("content", "")
         if isinstance(content, str):
-            return i
+            return index
         if isinstance(content, list):
             has_text = any(
-                c.get("type") == "text" for c in content if isinstance(c, dict)
+                block.get("type") == "text"
+                for block in content
+                if isinstance(block, dict)
             )
             has_only_tool_results = all(
-                c.get("type") == "tool_result" for c in content if isinstance(c, dict)
+                block.get("type") == "tool_result"
+                for block in content
+                if isinstance(block, dict)
             )
             if has_text and not has_only_tool_results:
-                return i
+                return index
     return 0
 
 
@@ -207,9 +237,8 @@ def extract_assistant_texts(entries, from_index):
     for entry in entries[from_index:]:
         if entry.get("type") != "assistant":
             continue
-        msg = entry.get("message", {})
-        content = msg.get("content", [])
-        # Fix #6: handle string-typed assistant content
+        message = entry.get("message", {})
+        content = message.get("content", [])
         if isinstance(content, str):
             if content:
                 texts.append(content)
@@ -224,17 +253,17 @@ def extract_assistant_texts(entries, from_index):
     return texts
 
 
-def get_line_containing(text, pos):
-    """Get the full line containing the character at position pos."""
-    start = text.rfind("\n", 0, pos) + 1
-    end = text.find("\n", pos)
+def get_line_containing(text, position):
+    """Get the full line containing the character at position."""
+    start = text.rfind("\n", 0, position) + 1
+    end = text.find("\n", position)
     if end == -1:
         end = len(text)
     return text[start:end].strip()
 
 
 def scan_for_hedging(text):
-    """Scan text for hedging patterns. Returns dict of line -> set of matched words."""
+    """Scan text for unverified language. Returns line -> matched words."""
     flagged_lines = {}
     for pattern in COMPILED_PATTERNS:
         for match in pattern.finditer(text):
@@ -245,46 +274,52 @@ def scan_for_hedging(text):
 
 
 def filter_with_model(flagged_lines):
-    """Use ML classifier to filter out false positives. Returns only genuine hedging."""
-    model = get_model()
+    """Filter false positives with the optional ML classifier."""
+    model, status = get_model()
     if model is None:
-        return flagged_lines
+        return flagged_lines, status
 
-    # Fix #1: wrap predict in try/except — fall back to regex-only if model breaks
     genuine = {}
     for line, words in flagged_lines.items():
         try:
-            pred = model.predict([line])[0]
-        except Exception:
-            return flagged_lines
-        if pred == 1:  # 1 = BLOCK (genuine hedging)
+            prediction = model.predict([line])[0]
+        except Exception as exc:  # pragma: no cover - exercised in subprocess tests
+            fallback = model_status(
+                False,
+                fallback_reason="predict_error",
+                error_stage="model_predict",
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
+            return flagged_lines, fallback
+        if prediction == 1:
             genuine[line] = words
-    return genuine
+    return genuine, status
 
 
 def format_reason(flagged_lines):
-    """Format the block reason with flagged lines and instructions."""
-    parts = ["Your response contains unverified assumptions:\n"]
-    for i, (line, words) in enumerate(flagged_lines.items(), 1):
+    """Format the block reason with flagged lines and next-step guidance."""
+    parts = ["Your response contains unverified uncertainty:\n"]
+    for index, (line, words) in enumerate(flagged_lines.items(), start=1):
         truncated = line[:200] + "..." if len(line) > 200 else line
-        flagged_words = ", ".join(f'"{w}"' for w in sorted(words))
-        parts.append(f'  {i}. "{truncated}"')
+        flagged_words = ", ".join(f'"{word}"' for word in sorted(words))
+        parts.append(f'  {index}. "{truncated}"')
         parts.append(f"     Flagged: {flagged_words}\n")
     parts.append(
-        "Verify EACH flagged claim using your tools (Read, Grep, Bash).\n"
-        "Replace assumption language with verified facts, or state\n"
-        "explicitly what you checked and why it cannot be confirmed.\n"
-        "Do NOT simply rephrase — actually verify."
+        "Verify EACH flagged statement using your tools (Read, Grep, Bash).\n"
+        "Only keep recommendations or conclusions you can support from evidence.\n"
+        "If it still cannot be confirmed, state explicitly what you checked and\n"
+        "why the available evidence is insufficient.\n"
+        "Do NOT simply rephrase — verify or justify."
     )
     return "\n".join(parts)
 
 
 def log_event(event):
-    """Append a JSONL event to the log file."""
+    """Append one JSONL event to the runtime log."""
     event["ts"] = datetime.now(timezone.utc).isoformat()
     try:
-        with open(LOG_PATH, "a") as f:
-            f.write(json.dumps(event, default=str) + "\n")
+        with open(LOG_PATH, "a", encoding="utf-8") as file_obj:
+            file_obj.write(json.dumps(event, default=str) + "\n")
     except OSError:
         pass
 
@@ -297,13 +332,12 @@ def main():
 
     transcript_path = input_data.get("transcript_path", "")
     session_id = input_data.get("session_id", "")
-    stop_hook_active = input_data.get("stop_hook_active", False)  # logged but not used for decisions (intentional v1)
+    stop_hook_active = input_data.get("stop_hook_active", False)
     cwd = input_data.get("cwd", "")
 
     if not transcript_path or not os.path.exists(transcript_path):
         sys.exit(0)
 
-    # Fix #4: top-level exception handling — fail open with log entry
     try:
         entries = read_jsonl(transcript_path)
         if not entries:
@@ -311,71 +345,82 @@ def main():
 
         turn_start = find_last_user_text_index(entries)
         assistant_texts = extract_assistant_texts(entries, turn_start)
-
         if not assistant_texts:
             sys.exit(0)
 
         full_text = "\n".join(assistant_texts)
-
-        # Stage 1: Regex pre-filter (fast, free)
         regex_flags = scan_for_hedging(full_text)
 
         if not regex_flags:
-            log_event({
+            log_event(
+                {
+                    "session": session_id,
+                    "project": os.path.basename(cwd) if cwd else "",
+                    "retry": stop_hook_active,
+                    "text_blocks": len(assistant_texts),
+                    "text_chars": len(full_text),
+                    "result": "pass",
+                    "stage": "regex",
+                    "ml_available": None,
+                    "fallback_reason": None,
+                    "error_stage": None,
+                    "flag_count": 0,
+                    "flags": [],
+                }
+            )
+            sys.exit(0)
+
+        confirmed_flags, status = filter_with_model(regex_flags)
+        stage = "model" if status["ml_available"] else "regex_only"
+
+        log_event(
+            {
                 "session": session_id,
                 "project": os.path.basename(cwd) if cwd else "",
                 "retry": stop_hook_active,
                 "text_blocks": len(assistant_texts),
                 "text_chars": len(full_text),
-                "result": "pass",
-                "stage": "regex",
-                "flag_count": 0,
-                "flags": [],
-            })
-            sys.exit(0)
-
-        # Stage 2: ML classifier filters false positives
-        confirmed_flags = filter_with_model(regex_flags)
-
-        # Log with both stages visible
-        log_event({
-            "session": session_id,
-            "project": os.path.basename(cwd) if cwd else "",
-            "retry": stop_hook_active,
-            "text_blocks": len(assistant_texts),
-            "text_chars": len(full_text),
-            "result": "block" if confirmed_flags else "pass",
-            "stage": "model" if get_model() else "regex_only",
-            "regex_flags": len(regex_flags),
-            "model_flags": len(confirmed_flags),
-            "filtered_out": len(regex_flags) - len(confirmed_flags),
-            "flag_count": len(confirmed_flags),
-            "flags": [
-                {"line": line[:200], "words": sorted(words)}
-                for line, words in confirmed_flags.items()
-            ] if confirmed_flags else [],
-            "filtered": [
-                {"line": line[:200], "words": sorted(words)}
-                for line, words in regex_flags.items()
-                if line not in confirmed_flags
-            ],
-        })
+                "result": "block" if confirmed_flags else "pass",
+                "stage": stage,
+                "ml_available": status["ml_available"],
+                "fallback_reason": status["fallback_reason"],
+                "error_stage": status["error_stage"],
+                "error_detail": status["error_detail"],
+                "regex_flags": len(regex_flags),
+                "model_flags": len(confirmed_flags),
+                "filtered_out": len(regex_flags) - len(confirmed_flags),
+                "flag_count": len(confirmed_flags),
+                "flags": [
+                    {"line": line[:200], "words": sorted(words)}
+                    for line, words in confirmed_flags.items()
+                ],
+                "filtered": [
+                    {"line": line[:200], "words": sorted(words)}
+                    for line, words in regex_flags.items()
+                    if line not in confirmed_flags
+                ],
+            }
+        )
 
         if not confirmed_flags:
             sys.exit(0)
 
-        reason = format_reason(confirmed_flags)
-        print(json.dumps({"decision": "block", "reason": reason}))
+        print(json.dumps({"decision": "block", "reason": format_reason(confirmed_flags)}))
         sys.exit(0)
 
-    except Exception as exc:
-        # Fail open — log the error but don't block Claude
-        log_event({
-            "session": session_id,
-            "project": os.path.basename(cwd) if cwd else "",
-            "result": "error",
-            "error": f"{type(exc).__name__}: {exc}",
-        })
+    except Exception as exc:  # pragma: no cover - exercised in subprocess tests
+        log_event(
+            {
+                "session": session_id,
+                "project": os.path.basename(cwd) if cwd else "",
+                "result": "error",
+                "stage": "hook_error",
+                "ml_available": None,
+                "fallback_reason": None,
+                "error_stage": "hook_runtime",
+                "error_detail": f"{type(exc).__name__}: {exc}",
+            }
+        )
         sys.exit(0)
 
 

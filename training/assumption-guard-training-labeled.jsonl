@@ -171,18 +171,18 @@
 {"sentence": "Without authentication, the endpoint might return 403", "intent": "reason_conditionally", "block": false}
 {"sentence": "If the queue backs up, processing could halt entirely", "intent": "reason_conditionally", "block": false}
 {"sentence": "Removing this index could slow down the search query", "intent": "reason_conditionally", "block": false}
-{"sentence": "I cannot determine the exact version without checking package.json", "intent": "acknowledge_limit", "block": false}
-{"sentence": "Without access to the production logs, I cannot confirm this", "intent": "acknowledge_limit", "block": false}
-{"sentence": "The runtime behavior cannot be verified from the source code alone", "intent": "acknowledge_limit", "block": false}
-{"sentence": "I have not checked the external API documentation for this", "intent": "acknowledge_limit", "block": false}
-{"sentence": "This requires running the test suite to confirm", "intent": "acknowledge_limit", "block": false}
-{"sentence": "The actual performance numbers would need benchmarking", "intent": "acknowledge_limit", "block": false}
-{"sentence": "I cannot verify the deployment configuration from this codebase", "intent": "acknowledge_limit", "block": false}
-{"sentence": "Without the database schema, I cannot confirm the column types", "intent": "acknowledge_limit", "block": false}
-{"sentence": "This would need to be tested against the actual endpoint", "intent": "acknowledge_limit", "block": false}
-{"sentence": "I have not verified this against the latest API docs", "intent": "acknowledge_limit", "block": false}
-{"sentence": "Cannot determine from the available code whether this is thread-safe", "intent": "acknowledge_limit", "block": false}
-{"sentence": "The exact behavior depends on the runtime and cannot be checked statically", "intent": "acknowledge_limit", "block": false}
+{"sentence": "I cannot determine the exact version without checking package.json", "intent": "unchecked_limitation", "block": true}
+{"sentence": "Without access to the production logs, I cannot confirm this", "intent": "unchecked_limitation", "block": true}
+{"sentence": "The runtime behavior cannot be verified from the source code alone", "intent": "unchecked_limitation", "block": true}
+{"sentence": "I have not checked the external API documentation for this", "intent": "unchecked_limitation", "block": true}
+{"sentence": "This requires running the test suite to confirm", "intent": "unchecked_limitation", "block": true}
+{"sentence": "The actual performance numbers would need benchmarking", "intent": "unchecked_limitation", "block": true}
+{"sentence": "I cannot verify the deployment configuration from this codebase", "intent": "unchecked_limitation", "block": true}
+{"sentence": "Without the database schema, I cannot confirm the column types", "intent": "unchecked_limitation", "block": true}
+{"sentence": "This would need to be tested against the actual endpoint", "intent": "unchecked_limitation", "block": true}
+{"sentence": "I have not verified this against the latest API docs", "intent": "unchecked_limitation", "block": true}
+{"sentence": "Cannot determine from the available code whether this is thread-safe", "intent": "unchecked_limitation", "block": true}
+{"sentence": "The exact behavior depends on the runtime and cannot be checked statically", "intent": "unchecked_limitation", "block": true}
 {"sentence": "# This might need refactoring in the future", "intent": "code_content", "block": false}
 {"sentence": "// TODO: could be optimized with memoization", "intent": "code_content", "block": false}
 {"sentence": "# I think we should revisit this logic later", "intent": "code_content", "block": false}
@@ -213,3 +213,41 @@
 {"sentence": "The risk is relatively low", "intent": "compare", "block": false}
 {"sentence": "The setup is relatively painless", "intent": "compare", "block": false}
 {"sentence": "Processing is relatively fast for this dataset", "intent": "compare", "block": false}
+{"sentence": "Maybe rename this helper to be clearer", "intent": "recommend_unverified", "block": true}
+{"sentence": "Maybe split this function into two smaller ones", "intent": "recommend_unverified", "block": true}
+{"sentence": "This could be simplified by extracting a helper", "intent": "recommend_unverified", "block": true}
+{"sentence": "This could be more readable with an early return", "intent": "recommend_unverified", "block": true}
+{"sentence": "We should probably add a unit test here", "intent": "recommend_unverified", "block": true}
+{"sentence": "This probably deserves a comment explaining the edge case", "intent": "recommend_unverified", "block": true}
+{"sentence": "I think we should refactor this before adding features", "intent": "recommend_unverified", "block": true}
+{"sentence": "Maybe inline this helper instead of keeping two wrappers", "intent": "recommend_unverified", "block": true}
+{"sentence": "This could be clearer if renamed to parseResponse", "intent": "recommend_unverified", "block": true}
+{"sentence": "Perhaps this should live in a separate module", "intent": "recommend_unverified", "block": true}
+{"sentence": "Probably worth adding integration coverage for this path", "intent": "recommend_unverified", "block": true}
+{"sentence": "Maybe use a dataclass here", "intent": "recommend_unverified", "block": true}
+{"sentence": "This may be better as a small helper function", "intent": "recommend_unverified", "block": true}
+{"sentence": "I suspect this should be split into two functions", "intent": "recommend_unverified", "block": true}
+{"sentence": "It seems like this should return early on invalid input", "intent": "recommend_unverified", "block": true}
+{"sentence": "The hook blocked \"I have not checked the config yet\"", "intent": "reference_language", "block": false}
+{"sentence": "Flagged: \"cannot confirm\", \"have not checked\"", "intent": "reference_language", "block": false}
+{"sentence": "The sentence \"I can't confirm this without checking\" should block", "intent": "reference_language", "block": false}
+{"sentence": "Quoted example: \"This requires running the test suite to confirm\"", "intent": "reference_language", "block": false}
+{"sentence": "The report lists \"Maybe rename this helper\" as a blocked suggestion", "intent": "reference_language", "block": false}
+{"sentence": "| \"cannot confirm\" | BLOCK until evidence |", "intent": "reference_language", "block": false}
+{"sentence": "I checked package.json and requirements.txt and cannot confirm the version from this repo.", "intent": "verified_limitation", "block": false}
+{"sentence": "I searched the codebase and cannot confirm the production timeout value.", "intent": "verified_limitation", "block": false}
+{"sentence": "I read the available config files and cannot determine the default because no value is set.", "intent": "verified_limitation", "block": false}
+{"sentence": "I checked the migrations and schema files and cannot confirm the column type from this repo alone.", "intent": "verified_limitation", "block": false}
+{"sentence": "I ran the local test suite and still cannot confirm the production-only behavior.", "intent": "verified_limitation", "block": false}
+{"sentence": "I inspected the docs and source and cannot verify this because the relevant service is external.", "intent": "verified_limitation", "block": false}
+{"sentence": "I reviewed package.json and lockfiles and cannot confirm which version is deployed.", "intent": "verified_limitation", "block": false}
+{"sentence": "I searched for this flag in the repo and cannot find a definitive default.", "intent": "verified_limitation", "block": false}
+{"sentence": "I checked the available logs in this workspace and cannot confirm the runtime value.", "intent": "verified_limitation", "block": false}
+{"sentence": "I read the README and config loader and cannot determine the final env override order.", "intent": "verified_limitation", "block": false}
+{"sentence": "I looked at the endpoint definitions and cannot confirm the live response shape without the running service.", "intent": "verified_limitation", "block": false}
+{"sentence": "I grepped the repository and cannot verify that this code path is still reachable in production.", "intent": "verified_limitation", "block": false}
+{"sentence": "I'm not sure because I have not checked the config yet", "intent": "unchecked_limitation", "block": true}
+{"sentence": "I'm not certain without running the test suite", "intent": "unchecked_limitation", "block": true}
+{"sentence": "I'm not sure until I inspect the deployment config", "intent": "unchecked_limitation", "block": true}
+{"sentence": "I am not certain because I haven't reviewed the docs yet", "intent": "unchecked_limitation", "block": true}
+{"sentence": "I'm not sure here because I haven't searched the codebase yet", "intent": "unchecked_limitation", "block": true}

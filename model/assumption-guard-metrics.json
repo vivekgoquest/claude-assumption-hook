@@ -1,0 +1,133 @@
+{
+  "generated_at": "2026-03-18T01:17:17.894321+00:00",
+  "dataset": {
+    "rows": 253,
+    "label_counts": {
+      "block": 102,
+      "pass": 151
+    },
+    "intent_counts": {
+      "assert_unverified": 70,
+      "reference_language": 49,
+      "describe_type": 20,
+      "compare": 43,
+      "reason_conditionally": 15,
+      "unchecked_limitation": 17,
+      "code_content": 12,
+      "recommend_unverified": 15,
+      "verified_limitation": 12
+    }
+  },
+  "cross_validation": {
+    "folds": 5,
+    "f1_macro_mean": 0.887265,
+    "f1_macro_std": 0.029485
+  },
+  "model": {
+    "pipeline": "TF-IDF (1-3 grams, 5000 features) + 14 intent features -> LogisticRegression",
+    "size_bytes": 191925,
+    "size_kb": 187.427
+  },
+  "regression_cases": [
+    {
+      "text": "Maybe rename this helper to be clearer",
+      "reason": "unverified recommendation",
+      "expected_block": true,
+      "predicted_block": true,
+      "matched": true,
+      "block_probability": 0.76765
+    },
+    {
+      "text": "This could be simplified by extracting a helper",
+      "reason": "speculative improvement claim",
+      "expected_block": true,
+      "predicted_block": true,
+      "matched": true,
+      "block_probability": 0.762478
+    },
+    {
+      "text": "We should probably add a unit test here",
+      "reason": "uncertain recommendation",
+      "expected_block": true,
+      "predicted_block": true,
+      "matched": true,
+      "block_probability": 0.734242
+    },
+    {
+      "text": "I'm not sure because I have not checked the config yet",
+      "reason": "explicitly unchecked claim",
+      "expected_block": true,
+      "predicted_block": true,
+      "matched": true,
+      "block_probability": 0.806488
+    },
+    {
+      "text": "I have not checked the external API documentation for this",
+      "reason": "unverified limitation",
+      "expected_block": true,
+      "predicted_block": true,
+      "matched": true,
+      "block_probability": 0.785481
+    },
+    {
+      "text": "I checked package.json and requirements.txt and cannot confirm the config value from this repo.",
+      "reason": "verified limitation",
+      "expected_block": false,
+      "predicted_block": false,
+      "matched": true,
+      "block_probability": 0.237423
+    },
+    {
+      "text": "The app probably listens on port 3000",
+      "reason": "factual guess",
+      "expected_block": true,
+      "predicted_block": true,
+      "matched": true,
+      "block_probability": 0.677258
+    },
+    {
+      "text": "I think this migration already ran in production",
+      "reason": "first-person unverified assertion",
+      "expected_block": true,
+      "predicted_block": true,
+      "matched": true,
+      "block_probability": 0.898289
+    },
+    {
+      "text": "The hook flagged \"probably\" in the response",
+      "reason": "meta discussion",
+      "expected_block": false,
+      "predicted_block": false,
+      "matched": true,
+      "block_probability": 0.061779
+    },
+    {
+      "text": "The return value could be None or a string",
+      "reason": "type description",
+      "expected_block": false,
+      "predicted_block": false,
+      "matched": true,
+      "block_probability": 0.20604
+    },
+    {
+      "text": "When the cache is cold, this may take longer",
+      "reason": "conditional reasoning",
+      "expected_block": false,
+      "predicted_block": false,
+      "matched": true,
+      "block_probability": 0.339916
+    },
+    {
+      "text": "Use map rather than forEach here",
+      "reason": "idiomatic comparison",
+      "expected_block": false,
+      "predicted_block": false,
+      "matched": true,
+      "block_probability": 0.141044
+    }
+  ],
+  "regression_summary": {
+    "cases": 12,
+    "matched": 12
+  }
+}

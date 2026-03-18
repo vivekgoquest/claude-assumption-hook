@@ -11,7 +11,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HOOK_PATH = REPO_ROOT / "hook" / "assumption-guard.py"
-RUNTIME_MODULE_PATH = REPO_ROOT / "hook" / "assumption_guard_v2.py"
 TRAINING_SCRIPT = REPO_ROOT / "training" / "train_v2.py"
 REPLAY_SCRIPT = REPO_ROOT / "training" / "replay_eval_v2.py"
 MINING_SCRIPT = REPO_ROOT / "training" / "mine_transcripts_v2.py"
@@ -21,11 +20,17 @@ META_PATH = REPO_ROOT / "model" / "assumption-guard-v2-meta.json"
 REPORT_PATH = REPO_ROOT / "model" / "assumption-guard-v2-report.json"
 REGRESSION_CASES_PATH = REPO_ROOT / "training" / "assumption-guard-regression-cases.json"
 LABELED_DATA_PATH = REPO_ROOT / "training" / "assumption-guard-training-labeled.jsonl"
+LEGACY_RUNTIME_PATH = REPO_ROOT / "hook" / "assumption_guard_v2.py"
+LEGACY_MODEL_HELPER_PATH = REPO_ROOT / "hook" / "assumption_guard_model.py"
+LEGACY_TRAINING_SCRIPT = REPO_ROOT / "training" / "train_assumption_guard.py"
+LEGACY_MODEL_PATH = REPO_ROOT / "model" / "assumption-guard-model.pkl"
+LEGACY_METRICS_PATH = REPO_ROOT / "model" / "assumption-guard-metrics.json"
+LEGACY_EVAL_PATH = REPO_ROOT / "model" / "assumption-guard-eval.json"
 TRAINING_PYTHON = os.environ.get("ASSUMPTION_GUARD_TRAIN_PYTHON") or shutil.which("python3.11") or sys.executable
 
 
 def load_runtime_module():
-    spec = importlib.util.spec_from_file_location("assumption_guard_v2", RUNTIME_MODULE_PATH)
+    spec = importlib.util.spec_from_file_location("assumption_guard_runtime", HOOK_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -196,6 +201,14 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
         self.assertTrue(MINING_SCRIPT.exists())
         self.assertTrue(TRAINING_SCRIPT.exists())
         self.assertTrue(REPLAY_SCRIPT.exists())
+
+    def test_repo_only_keeps_single_runtime_and_v2_artifacts(self):
+        self.assertFalse(LEGACY_RUNTIME_PATH.exists())
+        self.assertFalse(LEGACY_MODEL_HELPER_PATH.exists())
+        self.assertFalse(LEGACY_TRAINING_SCRIPT.exists())
+        self.assertFalse(LEGACY_MODEL_PATH.exists())
+        self.assertFalse(LEGACY_METRICS_PATH.exists())
+        self.assertFalse(LEGACY_EVAL_PATH.exists())
 
     def test_replay_script_runs_against_committed_assets(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -36,12 +36,6 @@ The v2 runtime works in layers:
 
 If `onnxruntime`, `tokenizers`, the tokenizer asset, metadata JSON, or the ONNX model are missing or broken, the hook does not crash. It logs the exact fallback reason and continues in regex-only mode.
 
-The legacy sklearn path is still available with:
-
-```bash
-ASSUMPTION_GUARD_BACKEND=v1_legacy
-```
-
 ## Installation
 
 ### Runtime Requirements
@@ -65,8 +59,6 @@ Without those packages, the hook still runs in regex-only mode.
 ```bash
 mkdir -p ~/.claude/hooks
 cp hook/assumption-guard.py ~/.claude/hooks/
-cp hook/assumption_guard_v2.py ~/.claude/hooks/
-cp hook/assumption_guard_model.py ~/.claude/hooks/
 ```
 
 2. Copy the default v2 artifacts:
@@ -105,8 +97,8 @@ Every invocation appends JSONL to `~/.claude/assumption-guard.log.jsonl`.
 
 Important fields:
 
-- `stage`: `regex`, `regex_only`, `model`, `hook_error`
-- `backend`: `onnx`, `regex`, `legacy`
+- `stage`: `onnx`, `regex_only`, `hook_error`
+- `backend`: `onnx`, `regex`
 - `ml_available`
 - `fallback_reason`
 - `error_stage`
@@ -200,13 +192,8 @@ The final report currently shows all three candidates, with MiniLM selected as t
 ```text
 hook/
 ├── assumption-guard.py
-├── assumption_guard_model.py
-├── assumption_guard_v2.py
 └── settings-snippet.json
 model/
-├── assumption-guard-model.pkl
-├── assumption-guard-metrics.json
-├── assumption-guard-eval.json
 ├── assumption-guard-v2.onnx
 ├── assumption-guard-v2-tokenizer.json
 ├── assumption-guard-v2-meta.json
@@ -217,7 +204,6 @@ training/
 ├── assumption-guard-replay-cases.json
 ├── mine_transcripts_v2.py
 ├── replay_eval_v2.py
-├── train_assumption_guard.py
 └── train_v2.py
 tests/
 └── test_assumption_guard.py

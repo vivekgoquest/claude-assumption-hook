@@ -4,17 +4,24 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
-import sys
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-HOOK_DIR = REPO_ROOT / "hook"
-if str(HOOK_DIR) not in sys.path:
-    sys.path.insert(0, str(HOOK_DIR))
+HOOK_PATH = REPO_ROOT / "hook" / "assumption-guard.py"
 
-import assumption_guard_v2 as v2  # pylint: disable=wrong-import-position
+
+def load_runtime_module():
+    spec = importlib.util.spec_from_file_location("assumption_guard_runtime", HOOK_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+v2 = load_runtime_module()
 
 
 def parse_args():

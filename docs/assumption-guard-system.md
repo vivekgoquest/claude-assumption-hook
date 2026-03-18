@@ -47,7 +47,7 @@ The hook always exits `0`, even on fallback or internal errors, so it does not c
 
 The runtime unit is a clause, not a whole message.
 
-`hook/assumption_guard_v2.py` splits on:
+`hook/assumption-guard.py` splits on:
 
 - sentence boundaries
 - `;`
@@ -115,11 +115,6 @@ The current metadata threshold is `0.20`.
 - no ONNX model was used
 - only regex/hard-rule detection was active
 
-### `legacy`
-
-- the hook was forced into `ASSUMPTION_GUARD_BACKEND=v1_legacy`
-- sklearn pickle runtime was used
-
 ### `hook_error`
 
 - unexpected runtime failure inside the hook
@@ -178,13 +173,7 @@ Example fallback record:
 Runtime:
 
 - `hook/assumption-guard.py`
-- `hook/assumption_guard_v2.py`
 - `hook/settings-snippet.json`
-
-Legacy compatibility:
-
-- `hook/assumption_guard_model.py`
-- `model/assumption-guard-model.pkl`
 
 Training and evaluation:
 

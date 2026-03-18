@@ -64,10 +64,10 @@ Each row uses the v2 schema:
 
 ## Transcript Mining
 
-The transcript mining script is:
+Transcript mining now runs through the single-file orchestrator:
 
 ```bash
-python3.11 training/mine_transcripts_v2.py --output /tmp/assumption-guard-mined-v2.jsonl
+python3.11 hook/assumption-guard.py mine --output /tmp/assumption-guard-mined-v2.jsonl
 ```
 
 It currently:
@@ -93,7 +93,7 @@ The current checked-in v2 training path uses:
 - `scikit-learn`
 - `rapidfuzz`
 
-Candidate families trained by `training/train_v2.py`:
+Candidate families trained by `hook/assumption-guard.py train`:
 
 1. baseline: hashed TF-IDF + adaptive calibrated linear SVM fallback
 2. candidate A: `sentence-transformers/all-MiniLM-L6-v2`
@@ -104,7 +104,7 @@ Candidate families trained by `training/train_v2.py`:
 Run from the repo root:
 
 ```bash
-python3.11 training/train_v2.py
+python3.11 hook/assumption-guard.py train
 ```
 
 The script will:
@@ -127,7 +127,7 @@ Generated artifacts:
 Local overlays can be merged into the training run without changing the committed baseline corpus:
 
 ```bash
-python3.11 training/train_v2.py \
+python3.11 hook/assumption-guard.py train \
   --overlay-training-data ~/.claude/assumption-guard-state/training-overlay.jsonl \
   --overlay-regression-cases ~/.claude/assumption-guard-state/regression-overlay.jsonl \
   --overlay-replay-cases ~/.claude/assumption-guard-state/replay-overlay.jsonl
@@ -136,10 +136,10 @@ python3.11 training/train_v2.py \
 The objective trigger for when to run that training is handled separately by:
 
 ```bash
-python3.11 training/maybe_trigger_learning_cycle.py
+python3.11 hook/assumption-guard.py maybe-trigger
 ```
 
-That gatekeeper checks only pending queue rows, not raw log-file size, and launches `training/run_learning_cycle.py` only when the configured pending-row, cluster, age, and cooldown conditions are met.
+That gatekeeper checks only pending queue rows, not raw log-file size, and launches `hook/assumption-guard.py learning-cycle` only when the configured pending-row, cluster, age, and cooldown conditions are met.
 
 ## Selection Logic
 
@@ -204,7 +204,7 @@ On non-native Apple Silicon training environments, the report records `latency_e
 Use the replay script to re-check committed assets without retraining:
 
 ```bash
-python3.11 training/replay_eval_v2.py \
+python3.11 hook/assumption-guard.py replay \
   --regression-cases training/assumption-guard-regression-cases.json \
   --model model/assumption-guard-v2.onnx \
   --tokenizer model/assumption-guard-v2-tokenizer.json \

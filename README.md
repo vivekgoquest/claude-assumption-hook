@@ -152,19 +152,18 @@ New runtime env vars:
 - `ASSUMPTION_GUARD_LOW_MARGIN`
 - `ASSUMPTION_GUARD_DISABLE`
 - `ASSUMPTION_GUARD_TRIGGER_MODE`
-- `ASSUMPTION_GUARD_TRIGGER_SCRIPT`
 - `ASSUMPTION_GUARD_TRIGGER_PYTHON`
 
 Run one full learning cycle with:
 
 ```bash
-python3.11 training/run_learning_cycle.py
+python3.11 hook/assumption-guard.py learning-cycle
 ```
 
-The objective trigger is now a separate gatekeeper:
+Run the objective trigger manually with:
 
 ```bash
-python3.11 training/maybe_trigger_learning_cycle.py
+python3.11 hook/assumption-guard.py maybe-trigger
 ```
 
 It launches the heavy learning cycle only when one of these is true for pending queue rows:
@@ -180,10 +179,9 @@ If you want the hook to invoke the gatekeeper immediately after queue append, se
 
 ```bash
 export ASSUMPTION_GUARD_TRIGGER_MODE=post_append
-export ASSUMPTION_GUARD_TRIGGER_SCRIPT=/absolute/path/to/training/maybe_trigger_learning_cycle.py
 ```
 
-Without those env vars, the hook only captures queue rows and never launches the trigger on its own.
+Set `ASSUMPTION_GUARD_TRIGGER_MODE=off` when you want queue capture without any self-spawned background work.
 
 That cycle will:
 
@@ -221,19 +219,19 @@ The checked-in training path currently uses:
 Mine candidate clauses from local transcripts:
 
 ```bash
-python3.11 training/mine_transcripts_v2.py --output /tmp/assumption-guard-mined-v2.jsonl
+python3.11 hook/assumption-guard.py mine --output /tmp/assumption-guard-mined-v2.jsonl
 ```
 
 Train, compare candidates, export ONNX, and write the final report:
 
 ```bash
-python3.11 training/train_v2.py
+python3.11 hook/assumption-guard.py train
 ```
 
 Train with local overlays merged in memory:
 
 ```bash
-python3.11 training/train_v2.py \
+python3.11 hook/assumption-guard.py train \
   --overlay-training-data ~/.claude/assumption-guard-state/training-overlay.jsonl \
   --overlay-regression-cases ~/.claude/assumption-guard-state/regression-overlay.jsonl \
   --overlay-replay-cases ~/.claude/assumption-guard-state/replay-overlay.jsonl
@@ -242,7 +240,7 @@ python3.11 training/train_v2.py \
 Replay the committed regression fixture against the exported v2 assets:
 
 ```bash
-python3.11 training/replay_eval_v2.py \
+python3.11 hook/assumption-guard.py replay \
   --regression-cases training/assumption-guard-regression-cases.json \
   --model model/assumption-guard-v2.onnx \
   --tokenizer model/assumption-guard-v2-tokenizer.json \
@@ -292,14 +290,6 @@ training/
 ├── assumption-guard-training-labeled.jsonl
 ├── assumption-guard-regression-cases.json
 ├── assumption-guard-replay-cases.json
-├── build_review_batch.py
-├── maybe_trigger_learning_cycle.py
-├── mine_transcripts_v2.py
-├── promote_reviewed_examples.py
-├── replay_eval_v2.py
-├── review_with_claude.py
-├── run_learning_cycle.py
-└── train_v2.py
 tests/
 └── test_assumption_guard.py
 docs/

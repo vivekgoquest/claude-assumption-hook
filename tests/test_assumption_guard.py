@@ -11,14 +11,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HOOK_PATH = REPO_ROOT / "hook" / "assumption-guard.py"
-TRAINING_SCRIPT = REPO_ROOT / "training" / "train_v2.py"
-REPLAY_SCRIPT = REPO_ROOT / "training" / "replay_eval_v2.py"
-MINING_SCRIPT = REPO_ROOT / "training" / "mine_transcripts_v2.py"
-LEARNING_CYCLE_SCRIPT = REPO_ROOT / "training" / "run_learning_cycle.py"
-MAYBE_TRIGGER_SCRIPT = REPO_ROOT / "training" / "maybe_trigger_learning_cycle.py"
-BUILD_REVIEW_BATCH_SCRIPT = REPO_ROOT / "training" / "build_review_batch.py"
-REVIEW_WITH_CLAUDE_SCRIPT = REPO_ROOT / "training" / "review_with_claude.py"
-PROMOTE_REVIEWED_SCRIPT = REPO_ROOT / "training" / "promote_reviewed_examples.py"
 MODEL_PATH = REPO_ROOT / "model" / "assumption-guard-v2.onnx"
 TOKENIZER_PATH = REPO_ROOT / "model" / "assumption-guard-v2-tokenizer.json"
 META_PATH = REPO_ROOT / "model" / "assumption-guard-v2-meta.json"
@@ -31,6 +23,16 @@ LEGACY_TRAINING_SCRIPT = REPO_ROOT / "training" / "train_assumption_guard.py"
 LEGACY_MODEL_PATH = REPO_ROOT / "model" / "assumption-guard-model.pkl"
 LEGACY_METRICS_PATH = REPO_ROOT / "model" / "assumption-guard-metrics.json"
 LEGACY_EVAL_PATH = REPO_ROOT / "model" / "assumption-guard-eval.json"
+LEGACY_HELPER_SCRIPTS = [
+    REPO_ROOT / "training" / "run_learning_cycle.py",
+    REPO_ROOT / "training" / "maybe_trigger_learning_cycle.py",
+    REPO_ROOT / "training" / "build_review_batch.py",
+    REPO_ROOT / "training" / "review_with_claude.py",
+    REPO_ROOT / "training" / "promote_reviewed_examples.py",
+    REPO_ROOT / "training" / "train_v2.py",
+    REPO_ROOT / "training" / "replay_eval_v2.py",
+    REPO_ROOT / "training" / "mine_transcripts_v2.py",
+]
 TRAINING_PYTHON = os.environ.get("ASSUMPTION_GUARD_TRAIN_PYTHON") or shutil.which("python3.11") or sys.executable
 
 
@@ -38,20 +40,27 @@ def load_runtime_module():
     spec = importlib.util.spec_from_file_location("assumption_guard_runtime", HOOK_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
-
-
-def load_review_module():
-    spec = importlib.util.spec_from_file_location("assumption_guard_review", REVIEW_WITH_CLAUDE_SCRIPT)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
 def regression_cases():
     return json.loads(REGRESSION_CASES_PATH.read_text())
+
+
+def run_mode(mode, *args, env=None):
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+    return subprocess.run(
+        [TRAINING_PYTHON, str(HOOK_PATH), mode, *map(str, args)],
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        env=merged_env,
+        check=False,
+    )
 
 
 def run_hook(
@@ -97,6 +106,7 @@ def run_hook(
         env["ASSUMPTION_GUARD_TOKENIZER_PATH"] = str(tokenizer_path)
         env["ASSUMPTION_GUARD_META_PATH"] = str(meta_path)
         env["ASSUMPTION_GUARD_LOG_PATH"] = str(log_path)
+        env["ASSUMPTION_GUARD_TRIGGER_MODE"] = "off"
         if extra_env:
             env.update(extra_env)
         if import_blocker:
@@ -285,15 +295,8 @@ class AssumptionGuardRuntimeTests(unittest.TestCase):
 
 
 class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
-    def test_mining_and_training_entrypoints_exist(self):
-        self.assertTrue(MINING_SCRIPT.exists())
-        self.assertTrue(TRAINING_SCRIPT.exists())
-        self.assertTrue(REPLAY_SCRIPT.exists())
-        self.assertTrue(LEARNING_CYCLE_SCRIPT.exists())
-        self.assertTrue(MAYBE_TRIGGER_SCRIPT.exists())
-        self.assertTrue(BUILD_REVIEW_BATCH_SCRIPT.exists())
-        self.assertTrue(REVIEW_WITH_CLAUDE_SCRIPT.exists())
-        self.assertTrue(PROMOTE_REVIEWED_SCRIPT.exists())
+    def test_single_hook_entrypoint_exists(self):
+        self.assertTrue(HOOK_PATH.exists())
 
     def test_repo_only_keeps_single_runtime_and_v2_artifacts(self):
         self.assertFalse(LEGACY_RUNTIME_PATH.exists())
@@ -302,25 +305,14 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
         self.assertFalse(LEGACY_MODEL_PATH.exists())
         self.assertFalse(LEGACY_METRICS_PATH.exists())
         self.assertFalse(LEGACY_EVAL_PATH.exists())
+        for path in LEGACY_HELPER_SCRIPTS:
+            self.assertFalse(path.exists(), path)
 
     def test_replay_script_runs_against_committed_assets(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "replay-report.json"
             result = subprocess.run(
-                [
-                    TRAINING_PYTHON,
-                    str(REPLAY_SCRIPT),
-                    "--regression-cases",
-                    str(REGRESSION_CASES_PATH),
-                    "--model",
-                    str(MODEL_PATH),
-                    "--tokenizer",
-                    str(TOKENIZER_PATH),
-                    "--meta",
-                    str(META_PATH),
-                    "--output",
-                    str(output_path),
-                ],
+                [TRAINING_PYTHON, str(HOOK_PATH), "replay", "--regression-cases", str(REGRESSION_CASES_PATH), "--model", str(MODEL_PATH), "--tokenizer", str(TOKENIZER_PATH), "--meta", str(META_PATH), "--output", str(output_path)],
                 capture_output=True,
                 text=True,
                 cwd=REPO_ROOT,
@@ -331,11 +323,11 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             self.assertEqual(replay["summary"]["matched"], replay["summary"]["total"])
 
     def test_build_review_batch_merges_and_dedupes_queue_and_mined_rows(self):
+        runtime = load_runtime_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             queue_path = tmp / "queue.jsonl"
             mined_path = tmp / "mined.jsonl"
-            output_path = tmp / "review.jsonl"
             queue_rows = [
                 {
                     "candidate_id": "q-1",
@@ -374,31 +366,19 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             ]
             queue_path.write_text("\n".join(json.dumps(row) for row in queue_rows) + "\n")
             mined_path.write_text("\n".join(json.dumps(row) for row in mined_rows) + "\n")
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(BUILD_REVIEW_BATCH_SCRIPT),
-                    "--queue",
-                    str(queue_path),
-                    "--mined",
-                    str(mined_path),
-                    "--output",
-                    str(output_path),
-                ],
-                capture_output=True,
-                text=True,
-                cwd=REPO_ROOT,
-                check=False,
+            rows = runtime.build_review_batch_rows(
+                [queue_path],
+                [mined_path],
+                [],
+                limit=200,
             )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            rows = [json.loads(line) for line in output_path.read_text().splitlines() if line.strip()]
             self.assertEqual(len(rows), 2)
             texts = {row["text"] for row in rows}
             self.assertIn("Let me verify whether I can actually identify the new videos and remove them.", texts)
             self.assertIn("But if you want to revert, I can check which ones are new and remove them.", texts)
 
     def test_review_prompt_is_strict_and_examples_are_present(self):
-        review = load_review_module()
+        review = load_runtime_module()
         rows = [
             {
                 "id": "candidate-a",
@@ -406,7 +386,7 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
                 "intent": "verification_narration",
             }
         ]
-        prompt = review.build_prompt(rows)
+        prompt = review.build_review_prompt(rows)
         self.assertIn("You are a labeling worker for Assumption Guard.", prompt)
         self.assertIn("You are not solving the user's problem.", prompt)
         self.assertIn("Preserve candidate_id exactly and keep the same order as input.", prompt)
@@ -417,7 +397,7 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
         self.assertIn("dependency_gap_grounded", prompt)
 
     def test_review_output_validation_rejects_drift(self):
-        review = load_review_module()
+        review = load_runtime_module()
         input_rows = [
             {"id": "candidate-a"},
             {"id": "candidate-b"},
@@ -529,23 +509,16 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
                 },
             ]
             reviewed_path.write_text("\n".join(json.dumps(row) for row in reviewed_rows) + "\n")
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(PROMOTE_REVIEWED_SCRIPT),
-                    "--reviewed",
-                    str(reviewed_path),
-                    "--training-overlay",
-                    str(training_overlay),
-                    "--regression-overlay",
-                    str(regression_overlay),
-                    "--replay-overlay",
-                    str(replay_overlay),
-                ],
-                capture_output=True,
-                text=True,
-                cwd=REPO_ROOT,
-                check=False,
+            result = run_mode(
+                "promote",
+                "--reviewed",
+                reviewed_path,
+                "--training-overlay",
+                training_overlay,
+                "--regression-overlay",
+                regression_overlay,
+                "--replay-overlay",
+                replay_overlay,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             training_rows = [json.loads(line) for line in training_overlay.read_text().splitlines() if line.strip()]
@@ -616,27 +589,20 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             ]
             queue_path.parent.mkdir(parents=True, exist_ok=True)
             queue_path.write_text("\n".join(json.dumps(row) for row in queue_rows) + "\n")
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(LEARNING_CYCLE_SCRIPT),
-                    "--state-dir",
-                    str(state_dir),
-                    "--queue-path",
-                    str(queue_path),
-                    "--log-path",
-                    str(log_path),
-                    "--transcript-root",
-                    str(transcript_root),
-                    "--min-review-batch",
-                    "1",
-                    "--claude-cmd",
-                    f"{sys.executable} {reviewer_script}",
-                ],
-                capture_output=True,
-                text=True,
-                cwd=REPO_ROOT,
-                check=False,
+            result = run_mode(
+                "learning-cycle",
+                "--state-dir",
+                state_dir,
+                "--queue-path",
+                queue_path,
+                "--log-path",
+                log_path,
+                "--transcript-root",
+                transcript_root,
+                "--min-review-batch",
+                "1",
+                "--claude-cmd",
+                f"{sys.executable} {reviewer_script}",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = json.loads(result.stdout)
@@ -684,31 +650,24 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             ]
             queue_path.write_text("\n".join(json.dumps(row) for row in queue_rows) + "\n")
             reviewed_path.write_text("\n".join(json.dumps(row) for row in reviewed_rows) + "\n")
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(MAYBE_TRIGGER_SCRIPT),
-                    "--state-dir",
-                    str(state_dir),
-                    "--queue-path",
-                    str(queue_path),
-                    "--reviewed-path",
-                    str(reviewed_path),
-                    "--review-state-path",
-                    str(review_state_path),
-                    "--pending-threshold",
-                    "2",
-                    "--same-reason-threshold",
-                    "3",
-                    "--same-family-threshold",
-                    "3",
-                    "--oldest-age-seconds",
-                    "999999",
-                ],
-                capture_output=True,
-                text=True,
-                cwd=REPO_ROOT,
-                check=False,
+            result = run_mode(
+                "maybe-trigger",
+                "--state-dir",
+                state_dir,
+                "--queue-path",
+                queue_path,
+                "--reviewed-path",
+                reviewed_path,
+                "--review-state-path",
+                review_state_path,
+                "--pending-threshold",
+                "2",
+                "--same-reason-threshold",
+                "3",
+                "--same-family-threshold",
+                "3",
+                "--oldest-age-seconds",
+                "999999",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = json.loads(result.stdout)
@@ -725,17 +684,6 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             review_state_path = state_dir / "review-state.json"
             transcript_root = tmp / "projects"
             transcript_root.mkdir(parents=True)
-            run_script = tmp / "fake_run_cycle.py"
-            marker_path = tmp / "launched.json"
-            run_script.write_text(
-                "\n".join(
-                    [
-                        "import json, sys",
-                        f"open({str(marker_path)!r}, 'w', encoding='utf-8').write(json.dumps(sys.argv[1:]))",
-                        "print(json.dumps({'status':'captured','retrain':False}))",
-                    ]
-                )
-            )
             queue_path.parent.mkdir(parents=True, exist_ok=True)
             queue_rows = [
                 {
@@ -754,38 +702,31 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
                 },
             ]
             queue_path.write_text("\n".join(json.dumps(row) for row in queue_rows) + "\n")
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(MAYBE_TRIGGER_SCRIPT),
-                    "--state-dir",
-                    str(state_dir),
-                    "--queue-path",
-                    str(queue_path),
-                    "--reviewed-path",
-                    str(reviewed_path),
-                    "--review-state-path",
-                    str(review_state_path),
-                    "--run-script",
-                    str(run_script),
-                    "--transcript-root",
-                    str(transcript_root),
-                    "--pending-threshold",
-                    "2",
-                    "--cooldown-seconds",
-                    "0",
-                    "--foreground",
-                ],
-                capture_output=True,
-                text=True,
-                cwd=REPO_ROOT,
-                check=False,
+            result = run_mode(
+                "maybe-trigger",
+                "--state-dir",
+                state_dir,
+                "--queue-path",
+                queue_path,
+                "--reviewed-path",
+                reviewed_path,
+                "--review-state-path",
+                review_state_path,
+                "--transcript-root",
+                transcript_root,
+                "--pending-threshold",
+                "2",
+                "--cooldown-seconds",
+                "0",
+                "--foreground",
+                env={
+                    "ASSUMPTION_GUARD_DISABLE": "1",
+                },
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = json.loads(result.stdout)
             self.assertEqual(payload["status"], "launched")
             self.assertEqual(payload["trigger_reason"], "pending_rows")
-            self.assertTrue(marker_path.exists())
             review_state = json.loads(review_state_path.read_text())
             self.assertEqual(review_state["last_decision"], "launched")
 

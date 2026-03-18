@@ -1,67 +1,102 @@
 # Assumption Guard
 
-**Stop Claude from guessing, hand-waving, or recommending things it has not verified.**
+Assumption Guard is a Claude Code Stop hook that blocks unsupported claims before they are sent.
 
-Assumption Guard is a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) Stop hook that blocks uncertain assistant clauses until they are backed by evidence. The default runtime is v2:
+It is intentionally strict. It stops:
 
-- clause-level detection instead of whole-message classification
-- stdlib regex and hard-rule prefiltering
-- optional ONNX multiclass classifier for ambiguous cases
-- fail-open regex-only mode when model assets or ML deps are unavailable
+- unverified factual claims
+- unsupported recommendations
+- unsupported capability promises
+- unchecked “I haven't verified this yet” language
 
-The policy is intentionally strict. It blocks:
+It allows safe lanes such as:
 
-- unverified factual claims: `I think the timeout is 30 seconds`
-- unsupported recommendations: `Maybe rename this helper to be clearer`
-- unsupported capability promises: `I can figure out which videos were newly created and delete them`
-- unchecked limitations: `I'm not sure because I haven't checked the config yet`
+- verification narration: `Let me verify whether...`
+- quoted or meta discussion about the detector
+- type and shape analysis
+- conditional reasoning
+- grounded limitations that say what was checked and what is still missing
 
-It allows clearly bounded safe lanes such as meta discussion, quoted examples, type/shape analysis, conditional reasoning, idiomatic comparisons, verification narration, and grounded limitations that explicitly say what was checked.
+## How It Works
 
-## Runtime Design
+The runtime is layered:
+
+1. read only the current assistant turn from the Claude transcript
+2. split the response into clauses
+3. apply hard-pass suppressors for code, quotes, type language, and meta language
+4. apply hard-block rules for explicit unchecked language
+5. run the ONNX classifier only on ambiguous clauses
+6. block if any clause still crosses the configured threshold
 
 The hook contract stays simple:
 
-- input: the Claude Stop-hook JSON payload on stdin
+- input: Claude Stop-hook JSON on stdin
 - pass: no stdout, exit `0`
 - block: `{"decision":"block","reason":"..."}`
 
-The v2 runtime works in layers:
+If ONNX runtime dependencies or model assets are missing, the hook fails open into regex-only mode and logs the fallback reason.
 
-1. Extract only the current assistant turn from the transcript.
-2. Split the assistant text into clauses.
-3. Apply hard-pass suppressors for code, quotes, and meta/report language.
-4. Apply hard-block rules for explicit unchecked language such as `I need to verify ...`.
-5. Run the ONNX classifier only on ambiguous clauses that survive the earlier filters.
-6. Sum the BLOCK-class probabilities and block when `p_block >= threshold`.
+## Project Layout
 
-If `onnxruntime`, `tokenizers`, the tokenizer asset, metadata JSON, or the ONNX model are missing or broken, the hook does not crash. It logs the exact fallback reason and continues in regex-only mode.
+This repo is intentionally small.
 
-## Installation
+```text
+hook/
+└── assumption-guard/
+    ├── assumption-guard.py
+    ├── settings-snippet.json
+    ├── assumption-guard-v2.onnx
+    ├── assumption-guard-v2-tokenizer.json
+    ├── assumption-guard-v2-meta.json
+    ├── baseline/
+    │   ├── assumption-guard-training-labeled.jsonl
+    │   ├── assumption-guard-regression-cases.json
+    │   ├── assumption-guard-replay-cases.json
+    │   └── assumption-guard-v2-report.json
 
-### Runtime Requirements
+docs/
+├── architecture.md
+└── training.md
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+tests/
+└── test_assumption_guard.py
+```
+
+At runtime the installed hook creates a local `state/` folder inside that same package:
+
+```text
+~/.claude/hooks/assumption-guard/state/
+├── assumption-guard.log.jsonl
+├── learning-queue.jsonl
+├── queue/
+├── reviewed-claude.jsonl
+├── current-model-report.json
+└── candidates/
+
+```
+
+The important idea is:
+
+- `baseline/` is packaged seed data and the committed report
+- `state/` is mutable local runtime state and is not committed
+
+Everything specific to this hook lives under one folder.
+
+## Install
+
+Requirements:
+
+- Claude Code
 - Python 3.8+
-- optional ML runtime packages for v2: `onnxruntime`, `tokenizers`
+- optional for ONNX mode: `onnxruntime`, `tokenizers`
 
-Install the optional runtime packages with:
+Install optional runtime deps:
 
 ```bash
 pip install onnxruntime tokenizers
 ```
 
-Without those packages, the hook still runs in regex-only mode.
-
-The packaged install keeps everything for this hook under one top-level folder:
-
-- `~/.claude/hooks/assumption-guard/`
-- packaged assets and baseline: inside that folder
-- mutable runtime state: `~/.claude/hooks/assumption-guard/state/`
-
-### Setup
-
-1. Copy the packaged hook bundle:
+Copy the packaged hook:
 
 ```bash
 mkdir -p ~/.claude/hooks
@@ -69,7 +104,7 @@ rm -rf ~/.claude/hooks/assumption-guard
 cp -R hook/assumption-guard ~/.claude/hooks/
 ```
 
-2. Merge the Stop hook into `~/.claude/settings.json`:
+Point Claude Code at the packaged script:
 
 ```json
 {
@@ -89,229 +124,80 @@ cp -R hook/assumption-guard ~/.claude/hooks/
 }
 ```
 
-3. Start a new Claude Code session.
+The packaged hook keeps:
 
-## Logging
+- assets in `~/.claude/hooks/assumption-guard/`
+- mutable runtime state in `~/.claude/hooks/assumption-guard/state/`
 
-Every invocation appends JSONL to `~/.claude/hooks/assumption-guard/state/assumption-guard.log.jsonl`.
+## Runtime State
 
-Important fields:
+By default the hook writes:
 
-- `stage`: `onnx`, `regex_only`, `hook_error`
-- `backend`: `onnx`, `regex`
-- `ml_available`
-- `fallback_reason`
-- `error_stage`
-- `predicted_intent`
-- `p_block`
-- `threshold`
-- `flags` / `filtered`
+- log: `~/.claude/hooks/assumption-guard/state/assumption-guard.log.jsonl`
+- learning queue: `~/.claude/hooks/assumption-guard/state/learning-queue.jsonl`
+- current model report: `~/.claude/hooks/assumption-guard/state/current-model-report.json`
 
-Common fallback reasons:
-
-- `ml_import_error`
-- `meta_missing`
-- `tokenizer_missing`
-- `model_missing`
-- `asset_load_error`
-- `model_load_error`
-- `predict_error`
-
-## Sprint 1 Learning Loop
-
-The live hook now captures high-value learning candidates into local state without changing the Stop-hook contract.
-
-Local mutable state defaults:
-
-- state dir: `~/.claude/hooks/assumption-guard/state`
-- merged queue: `~/.claude/hooks/assumption-guard/state/learning-queue.jsonl`
-- daily queue shards: `~/.claude/hooks/assumption-guard/state/queue/YYYY-MM-DD.jsonl`
-- overlays:
-  - `training-overlay.jsonl`
-  - `regression-overlay.jsonl`
-  - `replay-overlay.jsonl`
-  - `reviewed-claude.jsonl`
-  - `current-model-report.json`
-
-The hook queues:
-
-- every blocked ONNX clause
-- every low-margin ONNX pass within `ASSUMPTION_GUARD_LOW_MARGIN`
-- every judgement-heavy heuristic rescue
-- mixed evidence / capability-gap clauses
-- a small deterministic sample of clean passes
-
-Queue rows are sanitized before writing: paths, URLs, emails, long IDs, and obvious secrets are replaced with placeholders.
-
-New runtime env vars:
+Important env vars:
 
 - `ASSUMPTION_GUARD_STATE_DIR`
+- `ASSUMPTION_GUARD_LOG_PATH`
 - `ASSUMPTION_GUARD_QUEUE_PATH`
 - `ASSUMPTION_GUARD_CAPTURE_MODE`
 - `ASSUMPTION_GUARD_LOW_MARGIN`
-- `ASSUMPTION_GUARD_DISABLE`
 - `ASSUMPTION_GUARD_TRIGGER_MODE`
-- `ASSUMPTION_GUARD_TRIGGER_PYTHON`
+- `ASSUMPTION_GUARD_DISABLE`
 
-Run one full learning cycle with:
+`ASSUMPTION_GUARD_TRIGGER_MODE` defaults to `post_append`, so the hook will check whether a learning cycle should be launched after new queue rows are written. Set it to `off` if you want enforcement without background trigger checks.
 
-```bash
-python3.11 hook/assumption-guard/assumption-guard.py learning-cycle
-```
+## Learning Loop
 
-Run the objective trigger manually with:
+The learning loop is local and iterative:
+
+1. the live hook writes high-value clauses to the learning queue
+2. `maybe-trigger` checks whether there is enough pending signal
+3. `learning-cycle` builds a review batch, calls `claude -p`, promotes reviewed rows into overlays, retrains from scratch, and only swaps the live assets if the candidate beats the current model
+
+Useful commands:
 
 ```bash
 python3.11 hook/assumption-guard/assumption-guard.py maybe-trigger
-```
-
-It launches the heavy learning cycle only when one of these is true for pending queue rows:
-
-- pending rows cross the configured threshold
-- one `candidate_reason` cluster is large enough
-- one `pattern_family` cluster is large enough
-- the oldest pending row is old enough
-
-It also enforces cooldown and skips while a learning cycle lock is active.
-
-The hook invokes the gatekeeper immediately after queue append by default. To make that explicit in your shell:
-
-```bash
-export ASSUMPTION_GUARD_TRIGGER_MODE=post_append
-```
-
-Set `ASSUMPTION_GUARD_TRIGGER_MODE=off` when you want queue capture without any self-spawned background work.
-
-That cycle will:
-
-1. mine sanitized transcript clauses
-2. merge mined rows with the live queue and recent repeated log clauses
-3. review the batch with `claude -p`
-4. auto-promote reviewed rows into local overlays
-5. retrain from scratch with the overlay merged in memory
-6. promote new ONNX assets only when replay/regression/family gates beat the current model
-
-## Transcript Mining And Training
-
-v2 is trained from a transcript-derived, sanitized clause corpus. The default mining source is:
-
-```text
-/Users/vivek/.claude/projects
-```
-
-Only sanitized, derived clause examples are committed back into the repo.
-
-### Training Requirements
-
-The checked-in training path currently uses:
-
-- Python 3.11
-- `torch`
-- `transformers`
-- `onnx`
-- `onnxruntime`
-- `scikit-learn`
-- `rapidfuzz`
-
-### Commands
-
-Mine candidate clauses from local transcripts:
-
-```bash
-python3.11 hook/assumption-guard/assumption-guard.py mine --output /tmp/assumption-guard-mined-v2.jsonl
-```
-
-Train, compare candidates, export ONNX, and write the final report:
-
-```bash
+python3.11 hook/assumption-guard/assumption-guard.py learning-cycle
+python3.11 hook/assumption-guard/assumption-guard.py mine --output /tmp/assumption-guard-mined.jsonl
 python3.11 hook/assumption-guard/assumption-guard.py train
-```
-
-Train with local overlays merged in memory:
-
-```bash
-python3.11 hook/assumption-guard/assumption-guard.py train \
-  --overlay-training-data ~/.claude/hooks/assumption-guard/state/training-overlay.jsonl \
-  --overlay-regression-cases ~/.claude/hooks/assumption-guard/state/regression-overlay.jsonl \
-  --overlay-replay-cases ~/.claude/hooks/assumption-guard/state/replay-overlay.jsonl
-```
-
-Replay the committed regression fixture against the exported v2 assets:
-
-```bash
 python3.11 hook/assumption-guard/assumption-guard.py replay \
   --regression-cases hook/assumption-guard/baseline/assumption-guard-regression-cases.json \
   --model hook/assumption-guard/assumption-guard-v2.onnx \
   --tokenizer hook/assumption-guard/assumption-guard-v2-tokenizer.json \
   --meta hook/assumption-guard/assumption-guard-v2-meta.json \
-  --output /tmp/assumption-guard-v2-replay.json
+  --output /tmp/assumption-guard-replay.json
 ```
 
-## Current v2 Snapshot
+## Current Model
 
-From `hook/assumption-guard/baseline/assumption-guard-v2-report.json`:
+The current packaged model is a clause-level ONNX classifier with 13 intent labels.
+
+Selected model:
+
+- `sentence-transformers/all-MiniLM-L6-v2`
+
+Committed report snapshot:
 
 - dataset rows: `485`
-- split: `344 train / 72 dev / 69 test`
-- intents: `13`
-- selected candidate: `sentence-transformers/all-MiniLM-L6-v2`
 - threshold: `0.20`
-- regression fixture: `62 / 62`
-- replay corpus: `17 / 17`
-- held-out test split: `27 TP / 42 TN / 0 FP / 0 FN`
-- targeted family accuracy:
-  - `verification_narration`: `1.0`
-  - `dependency_gap_grounded`: `1.0`
-  - `capability_promise_unverified`: `1.0`
-- ONNX size: about `22 MB`
-- tokenizer size: about `695 KB`
+- regression: `62 / 62`
+- replay: `17 / 17`
 
-Candidate comparison:
+See:
 
-- baseline: hashed TF-IDF + calibrated linear SVM
-- candidate A: MiniLM-L6 sequence classifier
-- candidate B: DeBERTa-v3-small sequence classifier
+- [architecture.md](/Users/vivek/Goquest%20Media%20Dropbox/Vivek%20Lath/Tech%20and%20Code/temp/claude-assumption-hook/docs/architecture.md)
+- [training.md](/Users/vivek/Goquest%20Media%20Dropbox/Vivek%20Lath/Tech%20and%20Code/temp/claude-assumption-hook/docs/training.md)
 
-The final report currently shows all three candidates, with MiniLM selected as the smallest model that clears the replay and regression gates.
+## Verify
 
-## Project Structure
-
-```text
-hook/
-├── assumption-guard/
-│   ├── assumption-guard.py
-│   ├── assumption-guard-v2.onnx
-│   ├── assumption-guard-v2-tokenizer.json
-│   ├── assumption-guard-v2-meta.json
-│   └── baseline/
-│       ├── assumption-guard-training-labeled.jsonl
-│       ├── assumption-guard-regression-cases.json
-│       ├── assumption-guard-replay-cases.json
-│       └── assumption-guard-v2-report.json
-│   └── state/
-│       ├── assumption-guard.log.jsonl
-│       ├── learning-queue.jsonl
-│       ├── queue/
-│       ├── reviewed-claude.jsonl
-│       ├── current-model-report.json
-│       └── candidates/
-└── settings-snippet.json
-tests/
-└── test_assumption_guard.py
-docs/
-├── assumption-guard-system.md
-├── model-training.md
-└── archive/
-```
-
-## Verification
-
-Run the full test suite with:
+Run:
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
-## License
-
-MIT
+That covers runtime behavior, fallback behavior, packaged layout, replay, learning-loop plumbing, and training smoke checks.

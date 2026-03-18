@@ -1,4 +1,4 @@
-# Assumption Guard — Model Training
+# Assumption Guard Training
 
 ## Overview
 

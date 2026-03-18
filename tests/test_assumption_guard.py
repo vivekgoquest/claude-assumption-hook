@@ -327,7 +327,7 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
         self.assertEqual(Path(runtime.QUEUE_PATH), HOOK_PACKAGE_DIR / "state" / "learning-queue.jsonl")
 
     def test_settings_snippet_points_to_packaged_script(self):
-        settings = json.loads((REPO_ROOT / "hook" / "settings-snippet.json").read_text())
+        settings = json.loads((HOOK_PACKAGE_DIR / "settings-snippet.json").read_text())
         command = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
         self.assertEqual(command, "python3 ~/.claude/hooks/assumption-guard/assumption-guard.py")
 

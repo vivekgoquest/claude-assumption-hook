@@ -1,4 +1,4 @@
-# Assumption Guard — System Documentation
+# Assumption Guard Architecture
 
 ## Purpose
 
@@ -222,7 +222,7 @@ The hook invokes this gatekeeper immediately after queue append by default when 
 Runtime:
 
 - `hook/assumption-guard/assumption-guard.py`
-- `hook/settings-snippet.json`
+- `hook/assumption-guard/settings-snippet.json`
 
 Packaged baseline and report:
 
@@ -237,7 +237,7 @@ Generated v2 artifacts:
 - `hook/assumption-guard/assumption-guard-v2-tokenizer.json`
 - `hook/assumption-guard/assumption-guard-v2-meta.json`
 
-Mutable runtime state:
+Mutable runtime state is created locally inside the installed hook package and is not committed:
 
 - `hook/assumption-guard/state/assumption-guard.log.jsonl`
 - `hook/assumption-guard/state/learning-queue.jsonl`

@@ -320,6 +320,12 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
         self.assertTrue(REGRESSION_CASES_PATH.exists())
         self.assertTrue(REPORT_PATH.exists())
 
+    def test_packaged_defaults_keep_mutable_state_under_package_dir(self):
+        runtime = load_runtime_module()
+        self.assertEqual(runtime.STATE_PATH, HOOK_PACKAGE_DIR / "state")
+        self.assertEqual(Path(runtime.LOG_PATH), HOOK_PACKAGE_DIR / "state" / "assumption-guard.log.jsonl")
+        self.assertEqual(Path(runtime.QUEUE_PATH), HOOK_PACKAGE_DIR / "state" / "learning-queue.jsonl")
+
     def test_settings_snippet_points_to_packaged_script(self):
         settings = json.loads((REPO_ROOT / "hook" / "settings-snippet.json").read_text())
         command = settings["hooks"]["Stop"][0]["hooks"][0]["command"]

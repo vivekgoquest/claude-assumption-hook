@@ -53,6 +53,12 @@ pip install onnxruntime tokenizers
 
 Without those packages, the hook still runs in regex-only mode.
 
+The packaged install keeps everything for this hook under one top-level folder:
+
+- `~/.claude/hooks/assumption-guard/`
+- packaged assets and baseline: inside that folder
+- mutable runtime state: `~/.claude/hooks/assumption-guard/state/`
+
 ### Setup
 
 1. Copy the packaged hook bundle:
@@ -87,7 +93,7 @@ cp -R hook/assumption-guard ~/.claude/hooks/
 
 ## Logging
 
-Every invocation appends JSONL to `~/.claude/assumption-guard.log.jsonl`.
+Every invocation appends JSONL to `~/.claude/hooks/assumption-guard/state/assumption-guard.log.jsonl`.
 
 Important fields:
 
@@ -115,11 +121,11 @@ Common fallback reasons:
 
 The live hook now captures high-value learning candidates into local state without changing the Stop-hook contract.
 
-Local state defaults:
+Local mutable state defaults:
 
-- state dir: `~/.claude/assumption-guard-state`
-- merged queue: `~/.claude/assumption-guard-state/learning-queue.jsonl`
-- daily queue shards: `~/.claude/assumption-guard-state/queue/YYYY-MM-DD.jsonl`
+- state dir: `~/.claude/hooks/assumption-guard/state`
+- merged queue: `~/.claude/hooks/assumption-guard/state/learning-queue.jsonl`
+- daily queue shards: `~/.claude/hooks/assumption-guard/state/queue/YYYY-MM-DD.jsonl`
 - overlays:
   - `training-overlay.jsonl`
   - `regression-overlay.jsonl`
@@ -225,9 +231,9 @@ Train with local overlays merged in memory:
 
 ```bash
 python3.11 hook/assumption-guard/assumption-guard.py train \
-  --overlay-training-data ~/.claude/assumption-guard-state/training-overlay.jsonl \
-  --overlay-regression-cases ~/.claude/assumption-guard-state/regression-overlay.jsonl \
-  --overlay-replay-cases ~/.claude/assumption-guard-state/replay-overlay.jsonl
+  --overlay-training-data ~/.claude/hooks/assumption-guard/state/training-overlay.jsonl \
+  --overlay-regression-cases ~/.claude/hooks/assumption-guard/state/regression-overlay.jsonl \
+  --overlay-replay-cases ~/.claude/hooks/assumption-guard/state/replay-overlay.jsonl
 ```
 
 Replay the committed regression fixture against the exported v2 assets:
@@ -282,6 +288,13 @@ hook/
 │       ├── assumption-guard-regression-cases.json
 │       ├── assumption-guard-replay-cases.json
 │       └── assumption-guard-v2-report.json
+│   └── state/
+│       ├── assumption-guard.log.jsonl
+│       ├── learning-queue.jsonl
+│       ├── queue/
+│       ├── reviewed-claude.jsonl
+│       ├── current-model-report.json
+│       └── candidates/
 └── settings-snippet.json
 tests/
 └── test_assumption_guard.py

@@ -144,7 +144,7 @@ In those cases, Assumption Guard falls back to regex-only decisions and records 
 
 ## Logging
 
-Each invocation appends one JSON line to `~/.claude/assumption-guard.log.jsonl`.
+Each invocation appends one JSON line to `~/.claude/hooks/assumption-guard/state/assumption-guard.log.jsonl`.
 
 Important fields:
 
@@ -178,15 +178,15 @@ Example fallback record:
 
 Sprint 1 adds an always-on local learning loop around the live hook.
 
-Default local state:
+Default local mutable state:
 
-- `~/.claude/assumption-guard-state/learning-queue.jsonl`
-- `~/.claude/assumption-guard-state/queue/YYYY-MM-DD.jsonl`
-- `~/.claude/assumption-guard-state/training-overlay.jsonl`
-- `~/.claude/assumption-guard-state/regression-overlay.jsonl`
-- `~/.claude/assumption-guard-state/replay-overlay.jsonl`
-- `~/.claude/assumption-guard-state/reviewed-claude.jsonl`
-- `~/.claude/assumption-guard-state/current-model-report.json`
+- `~/.claude/hooks/assumption-guard/state/learning-queue.jsonl`
+- `~/.claude/hooks/assumption-guard/state/queue/YYYY-MM-DD.jsonl`
+- `~/.claude/hooks/assumption-guard/state/training-overlay.jsonl`
+- `~/.claude/hooks/assumption-guard/state/regression-overlay.jsonl`
+- `~/.claude/hooks/assumption-guard/state/replay-overlay.jsonl`
+- `~/.claude/hooks/assumption-guard/state/reviewed-claude.jsonl`
+- `~/.claude/hooks/assumption-guard/state/current-model-report.json`
 
 The hook now queues:
 
@@ -236,3 +236,10 @@ Generated v2 artifacts:
 - `hook/assumption-guard/assumption-guard-v2.onnx`
 - `hook/assumption-guard/assumption-guard-v2-tokenizer.json`
 - `hook/assumption-guard/assumption-guard-v2-meta.json`
+
+Mutable runtime state:
+
+- `hook/assumption-guard/state/assumption-guard.log.jsonl`
+- `hook/assumption-guard/state/learning-queue.jsonl`
+- `hook/assumption-guard/state/reviewed-claude.jsonl`
+- `hook/assumption-guard/state/current-model-report.json`

@@ -128,9 +128,9 @@ Local overlays can be merged into the training run without changing the committe
 
 ```bash
 python3.11 hook/assumption-guard/assumption-guard.py train \
-  --overlay-training-data ~/.claude/assumption-guard-state/training-overlay.jsonl \
-  --overlay-regression-cases ~/.claude/assumption-guard-state/regression-overlay.jsonl \
-  --overlay-replay-cases ~/.claude/assumption-guard-state/replay-overlay.jsonl
+  --overlay-training-data ~/.claude/hooks/assumption-guard/state/training-overlay.jsonl \
+  --overlay-regression-cases ~/.claude/hooks/assumption-guard/state/regression-overlay.jsonl \
+  --overlay-replay-cases ~/.claude/hooks/assumption-guard/state/replay-overlay.jsonl
 ```
 
 The objective trigger for when to run that training is handled separately by:

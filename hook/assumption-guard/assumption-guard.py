@@ -169,7 +169,7 @@ WORKSPACE_ROOT = SCRIPT_PATH.parents[2] if len(SCRIPT_PATH.parents) > 2 else PAC
 CLAUDE_DIR = os.path.join(os.path.expanduser("~"), ".claude")
 STATE_DIR = os.environ.get(
     "ASSUMPTION_GUARD_STATE_DIR",
-    os.path.join(CLAUDE_DIR, "assumption-guard-state"),
+    str(PACKAGE_DIR / "state"),
 )
 STATE_PATH = Path(STATE_DIR)
 BASELINE_DIR = PACKAGE_DIR / "baseline"
@@ -187,7 +187,7 @@ META_PATH = os.environ.get(
 )
 LOG_PATH = os.environ.get(
     "ASSUMPTION_GUARD_LOG_PATH",
-    os.path.join(CLAUDE_DIR, "assumption-guard.log.jsonl"),
+    os.path.join(STATE_DIR, "assumption-guard.log.jsonl"),
 )
 QUEUE_PATH = os.environ.get(
     "ASSUMPTION_GUARD_QUEUE_PATH",

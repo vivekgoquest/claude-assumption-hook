@@ -239,6 +239,42 @@ class AssumptionGuardRuntimeTests(unittest.TestCase):
             self.assertIn("candidate_hash", row)
             self.assertIn("sanitized_text", row)
 
+    def test_hook_log_entry_keeps_expected_payload_shape_for_pass_and_block(self):
+        blocked_text = "But if you want to revert, I can check which ones are new and remove them."
+        passing_text = "Let me verify whether I can actually identify the new videos and remove them."
+
+        block_result, block_logs, _ = run_hook(blocked_text)
+        self.assertEqual(block_result.returncode, 0, block_result.stderr)
+        self.assertTrue(block_logs)
+        block_entry = block_logs[-1]
+        self.assertEqual(block_entry["result"], "block")
+        self.assertEqual(block_entry["backend"], "onnx")
+        self.assertIn("ts", block_entry)
+        self.assertIn("session", block_entry)
+        self.assertIn("stage", block_entry)
+        self.assertIn("ml_available", block_entry)
+        self.assertIn("flag_count", block_entry)
+        self.assertIn("flags", block_entry)
+        self.assertIn("predicted_intent", block_entry)
+        self.assertIn("p_block", block_entry)
+        self.assertIn("threshold", block_entry)
+        self.assertEqual(block_entry["flag_count"], 1)
+        self.assertEqual(len(block_entry["flags"]), 1)
+        self.assertIn("clause", block_entry["flags"][0])
+        self.assertIn("intent", block_entry["flags"][0])
+        self.assertIn("source", block_entry["flags"][0])
+
+        pass_result, pass_logs, _ = run_hook(passing_text)
+        self.assertEqual(pass_result.returncode, 0, pass_result.stderr)
+        self.assertTrue(pass_logs)
+        pass_entry = pass_logs[-1]
+        self.assertEqual(pass_entry["result"], "pass")
+        self.assertEqual(pass_entry["backend"], "onnx")
+        self.assertEqual(pass_entry["flag_count"], 0)
+        self.assertEqual(pass_entry["flags"], [])
+        self.assertEqual(pass_entry["predicted_intent"], [])
+        self.assertEqual(pass_entry["p_block"], [])
+
     def test_disable_env_bypasses_hook_and_queue_capture(self):
         state_dir = Path(tempfile.mkdtemp())
         queue_path = state_dir / "learning-queue.jsonl"
@@ -557,6 +593,25 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             self.assertEqual(report["selected_candidate"], "baseline_linear_svm")
             self.assertFalse(output_model.exists())
 
+    def test_log_event_appends_timestamp_without_dropping_fields(self):
+        runtime = load_runtime_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            log_path = tmp / "guard.log.jsonl"
+            original_log_path = runtime.LOG_PATH
+            try:
+                runtime.LOG_PATH = str(log_path)
+                runtime.log_event({"result": "pass", "stage": "onnx", "backend": "onnx"})
+            finally:
+                runtime.LOG_PATH = original_log_path
+
+            rows = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["result"], "pass")
+            self.assertEqual(rows[0]["stage"], "onnx")
+            self.assertEqual(rows[0]["backend"], "onnx")
+            self.assertIn("ts", rows[0])
+
     def test_learning_cycle_returns_structured_train_failure(self):
         runtime = load_runtime_module()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -629,6 +684,34 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             self.assertEqual(payload["status"], "captured")
             self.assertEqual(payload["reason"], "train_failed")
             self.assertFalse(payload["retrain"])
+
+    def test_command_maybe_trigger_skip_payload_shape(self):
+        runtime = load_runtime_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_dir = tmp / "state"
+            payload = runtime.command_maybe_trigger(
+                [
+                    "--state-dir",
+                    str(state_dir),
+                    "--queue-path",
+                    str(state_dir / "learning-queue.jsonl"),
+                    "--log-path",
+                    str(tmp / "guard.log.jsonl"),
+                    "--reviewed-path",
+                    str(state_dir / "reviewed-claude.jsonl"),
+                    "--review-state-path",
+                    str(state_dir / "review-state.json"),
+                ],
+                emit_output=False,
+            )
+
+            self.assertEqual(payload["status"], "skipped")
+            self.assertEqual(payload["reason"], "threshold_not_met")
+            self.assertIn("pending_rows", payload)
+            self.assertIn("largest_reason_cluster", payload)
+            self.assertIn("largest_family_cluster", payload)
+            self.assertIn("oldest_pending_age_seconds", payload)
 
     def test_learning_cycle_passes_training_python_to_train_subprocess(self):
         runtime = load_runtime_module()
@@ -1287,6 +1370,7 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertEqual(payload["status"], "captured")
             self.assertFalse(payload["retrain"])
+            self.assertIn("promoted", payload)
             staged_training_overlay = [
                 json.loads(line)
                 for line in (state_dir / "staged-training-overlay.jsonl").read_text().splitlines()
@@ -1385,6 +1469,7 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
 
             self.assertEqual(payload["status"], "trained")
             self.assertFalse(payload["promoted"])
+            self.assertIn("candidate_dir", payload)
             accepted_rows = [
                 json.loads(line)
                 for line in accepted_training.read_text().splitlines()
@@ -1487,6 +1572,9 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
                 META_PATH.write_text(original_meta)
 
             self.assertEqual(payload["status"], "promoted")
+            self.assertIn("candidate_dir", payload)
+            self.assertIn("family_metrics", payload)
+            self.assertIn("advanced", payload)
             self.assertFalse((state_dir / "staged-training-overlay.jsonl").exists())
             accepted_rows = [
                 json.loads(line)
@@ -1571,6 +1659,7 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             self.assertEqual(payload["status"], "captured")
             self.assertFalse(payload["retrain"])
             self.assertEqual(payload["reason"], "unhealthy_review_batch")
+            self.assertIn("health", payload)
 
     def test_maybe_trigger_uses_pending_rows_not_total_queue_size(self):
         with tempfile.TemporaryDirectory() as tmpdir:

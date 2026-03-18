@@ -7,10 +7,8 @@ import argparse
 import copy
 import json
 import hashlib
-import io
 import math
 import os
-import pickle
 import random
 import re
 import shlex
@@ -235,6 +233,9 @@ DEFAULT_DATASET = baseline_file_path("assumption-guard-training-labeled.jsonl", 
 DEFAULT_REGRESSION = baseline_file_path("assumption-guard-regression-cases.json", "training")
 DEFAULT_REPLAY = baseline_file_path("assumption-guard-replay-cases.json", "training")
 DEFAULT_REPORT = baseline_file_path("assumption-guard-v2-report.json", "model")
+DEFAULT_MODEL = Path(MODEL_PATH)
+DEFAULT_TOKENIZER = Path(TOKENIZER_PATH)
+DEFAULT_META = Path(META_PATH)
 
 
 class ClauseDecision:
@@ -1065,14 +1066,6 @@ def hook_main():
             }
         )
         sys.exit(0)
-
-
-def count_jsonl(path: Path) -> int:
-    if not path.exists():
-        return 0
-    return sum(1 for line in path.read_text().splitlines() if line.strip())
-
-
 def write_jsonl(path: Path, rows: Iterable[dict]):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -1238,6 +1231,178 @@ def run_self_json_command(
     return payload
 
 
+def emit_payload(payload: dict, emit_output: bool = True):
+    if emit_output:
+        print(json.dumps(payload))
+    return payload
+
+
+def fail_payload(reason: str, *, status: str = "skipped", **extra):
+    return {"status": status, "reason": reason, **extra}
+
+
+def success_payload(status: str, **extra):
+    return {"status": status, **extra}
+
+
+def command_paths_for_state_dir(
+    state_dir: Path,
+    *,
+    queue_path: Optional[Path] = None,
+    log_path: Optional[Path] = None,
+    reviewed_path: Optional[Path] = None,
+    review_state_path: Optional[Path] = None,
+):
+    state_dir = Path(state_dir)
+    return {
+        "state_dir": state_dir,
+        "queue_path": Path(queue_path) if queue_path is not None else state_dir / "learning-queue.jsonl",
+        "log_path": Path(log_path) if log_path is not None else state_dir / "assumption-guard.log.jsonl",
+        "reviewed_path": Path(reviewed_path) if reviewed_path is not None else state_dir / "reviewed-claude.jsonl",
+        "review_state_path": Path(review_state_path) if review_state_path is not None else state_dir / "review-state.json",
+        "learning_lock_path": state_dir / "learning-cycle.lock",
+        "trigger_lock_path": state_dir / "trigger-check.lock",
+        "mined_path": state_dir / "mined-review-input.jsonl",
+        "review_batch_path": state_dir / "review-batch.jsonl",
+        "quarantine_dir": state_dir / "quarantine",
+        "staged_training_overlay": state_dir / "staged-training-overlay.jsonl",
+        "staged_regression_overlay": state_dir / "staged-regression-overlay.jsonl",
+        "staged_replay_overlay": state_dir / "staged-replay-overlay.jsonl",
+        "accepted_training_overlay": state_dir / "accepted-training-overlay.jsonl",
+        "accepted_regression_overlay": state_dir / "accepted-regression-overlay.jsonl",
+        "accepted_replay_overlay": state_dir / "accepted-replay-overlay.jsonl",
+        "promotion_manifest_path": state_dir / "promotion-manifest.jsonl",
+        "current_report_path": state_dir / "current-model-report.json",
+        "candidates_root": state_dir / "candidates",
+        "logs_dir": state_dir / "logs",
+    }
+
+
+def candidate_artifact_paths(candidates_root: Path, timestamp: str):
+    candidate_dir = Path(candidates_root) / timestamp
+    return {
+        "candidate_dir": candidate_dir,
+        "model_path": candidate_dir / "assumption-guard-v2.onnx",
+        "tokenizer_path": candidate_dir / "assumption-guard-v2-tokenizer.json",
+        "meta_path": candidate_dir / "assumption-guard-v2-meta.json",
+        "report_path": candidate_dir / "assumption-guard-v2-report.json",
+    }
+
+
+def read_json(path: Path, default=None):
+    if not Path(path).exists():
+        return default
+    return json.loads(Path(path).read_text())
+
+
+def write_json(path: Path, payload: dict):
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps(payload, indent=2))
+
+
+def promotion_manifest_row(candidate_dir: Path, timestamp: str, candidate_report: dict, reviewed_rows: Sequence[dict], advance_summary: dict):
+    return {
+        "manifest_id": stable_sha1(f"{timestamp}:{candidate_dir}")[:16],
+        "candidate_dir": str(candidate_dir),
+        "selected_candidate": candidate_report.get("selected_candidate"),
+        "promoted_at": datetime.now(timezone.utc).isoformat(),
+        "reviewed_candidate_ids": [row.get("candidate_id") for row in reviewed_rows],
+        **advance_summary,
+    }
+
+
+def update_state_file(path: Path, state: dict, **updates):
+    state.update(updates)
+    write_state_json(path, state)
+
+
+def launch_learning_cycle(paths: dict, args, *, foreground: bool):
+    command = self_command(
+        "learning-cycle",
+        "--state-dir",
+        str(paths["state_dir"]),
+        "--queue-path",
+        str(paths["queue_path"]),
+        "--log-path",
+        str(paths["log_path"]),
+        "--transcript-root",
+        args.transcript_root,
+        "--claude-cmd",
+        args.claude_cmd,
+        "--training-python",
+        args.training_python,
+    )
+    if foreground:
+        result = subprocess.run(command, capture_output=True, text=True, cwd=str(WORKSPACE_ROOT), check=False)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "learning cycle failed")
+        return {"mode": "foreground", "stdout": result.stdout.strip()}
+
+    paths["logs_dir"].mkdir(parents=True, exist_ok=True)
+    launched_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output_log = paths["logs_dir"] / f"learning-cycle-{launched_at}.log"
+    with output_log.open("a", encoding="utf-8") as handle:
+        subprocess.Popen(
+            command,
+            cwd=str(WORKSPACE_ROOT),
+            stdout=handle,
+            stderr=handle,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+    return {"mode": "detached", "log_path": str(output_log)}
+
+
+def train_candidate_artifacts(paths: dict, args, artifacts: dict):
+    return run_self_json_command(
+        "train",
+        "--overlay-training-data",
+        str(paths["accepted_training_overlay"]),
+        "--overlay-training-data",
+        str(paths["staged_training_overlay"]),
+        "--overlay-regression-cases",
+        str(paths["accepted_regression_overlay"]),
+        "--overlay-regression-cases",
+        str(paths["staged_regression_overlay"]),
+        "--overlay-replay-cases",
+        str(paths["accepted_replay_overlay"]),
+        "--overlay-replay-cases",
+        str(paths["staged_replay_overlay"]),
+        "--output-model",
+        str(artifacts["model_path"]),
+        "--output-tokenizer",
+        str(artifacts["tokenizer_path"]),
+        "--output-meta",
+        str(artifacts["meta_path"]),
+        "--output-report",
+        str(artifacts["report_path"]),
+        env_overrides={"ASSUMPTION_GUARD_DISABLE": "1"},
+        python_executable=args.training_python,
+    )
+
+
+def candidate_is_promotable(candidate_report: dict, current_report: dict):
+    family_metrics = targeted_family_metrics(candidate_report)
+    accepted = (
+        candidate_report["regression_results"]["matched"] == candidate_report["regression_results"]["total"]
+        and candidate_report["replay_results"]["block_recall"] >= 0.95
+        and candidate_report["replay_results"]["pass_recall"] >= 0.95
+        and all(value >= 0.95 for value in family_metrics.values())
+        and better_than_current(candidate_report, current_report)
+    )
+    return accepted, family_metrics
+
+
+def promote_candidate_assets(artifacts: dict):
+    for source, target_name in (
+        ("model_path", "assumption-guard-v2.onnx"),
+        ("tokenizer_path", "assumption-guard-v2-tokenizer.json"),
+        ("meta_path", "assumption-guard-v2-meta.json"),
+    ):
+        os.replace(artifacts[source], PACKAGE_DIR / target_name)
+
+
 def review_row_from_queue(row: dict) -> dict:
     text = row.get("sanitized_text") or row.get("text") or ""
     intent = row.get("intent") or "reference_language"
@@ -1366,66 +1531,93 @@ REQUIRED_CONSOLIDATION_KEYS = {
     "resolution_reason",
 }
 CONSOLIDATION_ROUTES = {"staged_training", "staged_regression", "staged_replay", "quarantine"}
+REVIEW_PROMPT_PREFIX = (
+    "You are a labeling worker for Assumption Guard.\n"
+    "You are not solving the user's problem. You are not giving advice. "
+    "You are not rewriting the response. Your only job is to classify each candidate clause.\n"
+    "Return ONLY valid JSON.\n"
+    "Return one output object per input object.\n"
+    "Preserve candidate_id exactly and keep the same order as input.\n"
+    "Do not invent new labels.\n"
+    "Do not add keys.\n"
+    "Do not return markdown or prose.\n"
+    "If a case is ambiguous, choose the closest label and lower confidence instead of discussing alternatives.\n"
+    "Rationale must be one short sentence grounded in the clause text.\n"
+    "Allowed intent labels:\n"
+    + "\n".join(f"- {label}" for label in LABELS)
+    + "\nDecision rules:\n"
+    "- verification_narration: the speaker says they are about to check or verify something now\n"
+    "- capability_promise_unverified: the speaker claims they can perform an action or determine something without evidence\n"
+    "- dependency_gap_grounded: the speaker names something already confirmed, then states a concrete missing dependency that blocks the next action\n"
+    "- recommend_supported: the recommendation already cites concrete evidence\n"
+    "- recommend_unverified: the recommendation is unsupported\n"
+    "- unchecked_limitation: the speaker says they do not know or have not checked yet\n"
+    "- verified_limitation: the speaker says what they checked and then gives a bounded non-conclusion\n"
+    "- reference_language: the clause talks about the hook, labels, examples, or policy rather than making the claim itself\n"
+    "Failure conditions:\n"
+    "- any text outside valid JSON\n"
+    "- any missing candidate_id\n"
+    "- any unknown label\n"
+    "- any changed order\n"
+    "Examples:\n"
+    '- "Let me verify whether I can actually identify the new videos and remove them." -> verification_narration -> final_block=false\n'
+    '- "But if you want to revert, I can check which ones are new and remove them." -> capability_promise_unverified -> final_block=true\n'
+    '- "I confirmed DELETE /videos/bulk exists and requires ids. But without a saved list of the newly created ids, I can\'t selectively remove them." -> dependency_gap_grounded -> final_block=false\n'
+    "Output schema:\n"
+    '[{"candidate_id":"...","final_intent":"...","final_block":true,"confidence":0.93,"rationale":"...","pattern_family":"..."}]\n'
+)
+CONSOLIDATOR_PROMPT_PREFIX = (
+    "You are a consolidation worker for Assumption Guard.\n"
+    "You are resolving disputed reviewer outputs.\n"
+    "Return ONLY valid JSON and keep the same order as input.\n"
+    "Allowed routes: staged_training, staged_regression, staged_replay, quarantine.\n"
+    "Do not invent labels. Do not add keys.\n"
+    "Only choose staged_training when the row is safe enough to enter staged training data.\n"
+    "Use staged_regression or staged_replay for strategically valuable rows that should become fixtures first.\n"
+    "Output schema:\n"
+    '[{"candidate_id":"...","route":"staged_training","final_intent":"...","final_block":false,"confidence":0.83,"pattern_family":"...","resolution_reason":"..."}]\n'
+)
 
 
 def build_review_prompt(rows: Sequence[dict]) -> str:
-    return (
-        "You are a labeling worker for Assumption Guard.\n"
-        "You are not solving the user's problem. You are not giving advice. "
-        "You are not rewriting the response. Your only job is to classify each candidate clause.\n"
-        "Return ONLY valid JSON.\n"
-        "Return one output object per input object.\n"
-        "Preserve candidate_id exactly and keep the same order as input.\n"
-        "Do not invent new labels.\n"
-        "Do not add keys.\n"
-        "Do not return markdown or prose.\n"
-        "If a case is ambiguous, choose the closest label and lower confidence instead of discussing alternatives.\n"
-        "Rationale must be one short sentence grounded in the clause text.\n"
-        "Allowed intent labels:\n"
-        + "\n".join(f"- {label}" for label in LABELS)
-        + "\n"
-        "Decision rules:\n"
-        "- verification_narration: the speaker says they are about to check or verify something now\n"
-        "- capability_promise_unverified: the speaker claims they can perform an action or determine something without evidence\n"
-        "- dependency_gap_grounded: the speaker names something already confirmed, then states a concrete missing dependency that blocks the next action\n"
-        "- recommend_supported: the recommendation already cites concrete evidence\n"
-        "- recommend_unverified: the recommendation is unsupported\n"
-        "- unchecked_limitation: the speaker says they do not know or have not checked yet\n"
-        "- verified_limitation: the speaker says what they checked and then gives a bounded non-conclusion\n"
-        "- reference_language: the clause talks about the hook, labels, examples, or policy rather than making the claim itself\n"
-        "Failure conditions:\n"
-        "- any text outside valid JSON\n"
-        "- any missing candidate_id\n"
-        "- any unknown label\n"
-        "- any changed order\n"
-        "Examples:\n"
-        '- "Let me verify whether I can actually identify the new videos and remove them." -> verification_narration -> final_block=false\n'
-        '- "But if you want to revert, I can check which ones are new and remove them." -> capability_promise_unverified -> final_block=true\n'
-        '- "I confirmed DELETE /videos/bulk exists and requires ids. But without a saved list of the newly created ids, I can\'t selectively remove them." -> dependency_gap_grounded -> final_block=false\n'
-        "Output schema:\n"
-        '[{"candidate_id":"...","final_intent":"...","final_block":true,"confidence":0.93,"rationale":"...","pattern_family":"..."}]\n'
-        "Cases:\n"
-        + json.dumps(list(rows), ensure_ascii=True, indent=2)
-    )
+    return f"{REVIEW_PROMPT_PREFIX}Cases:\n{json.dumps(list(rows), ensure_ascii=True, indent=2)}"
 
 
-def parse_review_output(raw_output: str, input_rows: Sequence[dict]):
+def parse_ordered_json_output(raw_output: str, input_rows: Sequence[dict], *, required_keys: set[str], row_name: str):
     parsed = json.loads(raw_output)
     if not isinstance(parsed, list):
-        raise ValueError("review output must be a JSON array")
+        raise ValueError(f"{row_name} output must be a JSON array")
     if len(parsed) != len(input_rows):
-        raise ValueError("review output length must match input length")
+        raise ValueError(f"{row_name} output length must match input length")
+    return parsed
+
+
+def validate_ordered_output_rows(parsed: Sequence[dict], input_rows: Sequence[dict], *, required_keys: set[str], row_name: str):
     expected_ids = [row.get("id") or row.get("candidate_id") for row in input_rows]
     actual_ids = []
     for row in parsed:
         if not isinstance(row, dict):
-            raise ValueError("review row must be an object")
-        missing = REQUIRED_REVIEW_KEYS.difference(row)
+            raise ValueError(f"{row_name} row must be an object")
+        missing = required_keys.difference(row)
         if missing:
-            raise ValueError(f"missing review keys: {sorted(missing)}")
-        extras = set(row).difference(REQUIRED_REVIEW_KEYS)
+            raise ValueError(f"missing {row_name} keys: {sorted(missing)}")
+        extras = set(row).difference(required_keys)
         if extras:
-            raise ValueError(f"unexpected review keys: {sorted(extras)}")
+            raise ValueError(f"unexpected {row_name} keys: {sorted(extras)}")
+        actual_ids.append(row["candidate_id"])
+    if actual_ids != expected_ids:
+        raise ValueError("candidate_id order must match the input order exactly")
+    return parsed
+
+
+def parse_review_output(raw_output: str, input_rows: Sequence[dict]):
+    parsed = validate_ordered_output_rows(
+        parse_ordered_json_output(raw_output, input_rows, required_keys=REQUIRED_REVIEW_KEYS, row_name="review"),
+        input_rows,
+        required_keys=REQUIRED_REVIEW_KEYS,
+        row_name="review",
+    )
+    for row in parsed:
         if row["final_intent"] not in LABELS:
             raise ValueError(f"unknown final_intent: {row['final_intent']}")
         if not isinstance(row["final_block"], bool):
@@ -1440,45 +1632,23 @@ def parse_review_output(raw_output: str, input_rows: Sequence[dict]):
             raise ValueError("rationale must be a non-empty string")
         if len(row["rationale"].split()) > 25:
             raise ValueError("rationale must stay short")
-        actual_ids.append(row["candidate_id"])
-    if actual_ids != expected_ids:
-        raise ValueError("candidate_id order must match the input order exactly")
     return parsed
 
 
 def build_consolidator_prompt(disputed_rows: Sequence[dict]) -> str:
-    return (
-        "You are a consolidation worker for Assumption Guard.\n"
-        "You are resolving disputed reviewer outputs.\n"
-        "Return ONLY valid JSON and keep the same order as input.\n"
-        "Allowed routes: staged_training, staged_regression, staged_replay, quarantine.\n"
-        "Do not invent labels. Do not add keys.\n"
-        "Only choose staged_training when the row is safe enough to enter staged training data.\n"
-        "Use staged_regression or staged_replay for strategically valuable rows that should become fixtures first.\n"
-        "Output schema:\n"
-        '[{"candidate_id":"...","route":"staged_training","final_intent":"...","final_block":false,"confidence":0.83,"pattern_family":"...","resolution_reason":"..."}]\n'
-        "Cases:\n"
-        + json.dumps(list(disputed_rows), ensure_ascii=True, indent=2)
-    )
+    return f"{CONSOLIDATOR_PROMPT_PREFIX}Cases:\n{json.dumps(list(disputed_rows), ensure_ascii=True, indent=2)}"
 
 
 def parse_consolidator_output(raw_output: str, disputed_rows: Sequence[dict]):
-    parsed = json.loads(raw_output)
-    if not isinstance(parsed, list):
-        raise ValueError("consolidator output must be a JSON array")
-    if len(parsed) != len(disputed_rows):
-        raise ValueError("consolidator output length must match input length")
-    expected_ids = [row["candidate_id"] for row in disputed_rows]
-    actual_ids = []
+    parsed = validate_ordered_output_rows(
+        parse_ordered_json_output(
+            raw_output, disputed_rows, required_keys=REQUIRED_CONSOLIDATION_KEYS, row_name="consolidator"
+        ),
+        disputed_rows,
+        required_keys=REQUIRED_CONSOLIDATION_KEYS,
+        row_name="consolidator",
+    )
     for row in parsed:
-        if not isinstance(row, dict):
-            raise ValueError("consolidator row must be an object")
-        missing = REQUIRED_CONSOLIDATION_KEYS.difference(row)
-        if missing:
-            raise ValueError(f"missing consolidation keys: {sorted(missing)}")
-        extras = set(row).difference(REQUIRED_CONSOLIDATION_KEYS)
-        if extras:
-            raise ValueError(f"unexpected consolidation keys: {sorted(extras)}")
         if row["route"] not in CONSOLIDATION_ROUTES:
             raise ValueError(f"unknown consolidation route: {row['route']}")
         if row["final_intent"] not in LABELS:
@@ -1493,10 +1663,37 @@ def parse_consolidator_output(raw_output: str, disputed_rows: Sequence[dict]):
             raise ValueError("confidence must be between 0 and 1")
         if not isinstance(row["resolution_reason"], str) or not row["resolution_reason"].strip():
             raise ValueError("resolution_reason must be a non-empty string")
-        actual_ids.append(row["candidate_id"])
-    if actual_ids != expected_ids:
-        raise ValueError("candidate_id order must match the input order exactly")
     return parsed
+
+
+def run_llm_json_round(
+    input_rows: Sequence[dict],
+    *,
+    claude_cmd: str,
+    quarantine_dir: Path,
+    output_path: Optional[Path],
+    prompt_builder,
+    parser,
+    quarantine_prefix: str,
+):
+    if not input_rows:
+        if output_path is not None:
+            write_jsonl(output_path, [])
+        return []
+    prompt = prompt_builder(input_rows)
+    last_error = None
+    quarantine_dir.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            rows = parser(run_review_with_claude(claude_cmd, prompt), input_rows)
+            if output_path is not None:
+                write_jsonl(output_path, rows)
+            return rows
+        except Exception as exc:  # pragma: no cover - exercised in manual runs
+            last_error = exc
+    quarantine_path = quarantine_dir / f"{quarantine_prefix}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.failed.jsonl"
+    write_jsonl(quarantine_path, input_rows)
+    raise RuntimeError(json.dumps({"error": str(last_error), "quarantined": str(quarantine_path)}))
 
 
 def consolidate_disputed_rows(
@@ -1506,25 +1703,15 @@ def consolidate_disputed_rows(
     quarantine_dir: Path,
     output_path: Optional[Path] = None,
 ):
-    if not disputed_rows:
-        if output_path is not None:
-            write_jsonl(output_path, [])
-        return []
-    prompt = build_consolidator_prompt(disputed_rows)
-    last_error = None
-    quarantine_dir.mkdir(parents=True, exist_ok=True)
-    for attempt in range(2):
-        try:
-            raw_output = run_review_with_claude(claude_cmd, prompt)
-            resolved = parse_consolidator_output(raw_output, disputed_rows)
-            if output_path is not None:
-                write_jsonl(output_path, resolved)
-            return resolved
-        except Exception as exc:  # pragma: no cover - exercised in manual runs
-            last_error = exc
-    quarantine_path = quarantine_dir / f"consolidation-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.failed.jsonl"
-    write_jsonl(quarantine_path, disputed_rows)
-    raise RuntimeError(json.dumps({"error": str(last_error), "quarantined": str(quarantine_path)}))
+    return run_llm_json_round(
+        disputed_rows,
+        claude_cmd=claude_cmd,
+        quarantine_dir=quarantine_dir,
+        output_path=output_path,
+        prompt_builder=build_consolidator_prompt,
+        parser=parse_consolidator_output,
+        quarantine_prefix="consolidation",
+    )
 
 
 def run_review_with_claude(claude_cmd: str, prompt: str):
@@ -1544,21 +1731,15 @@ def review_rows_with_claude(
     quarantine_dir: Path,
     output_path: Optional[Path] = None,
 ):
-    prompt = build_review_prompt(input_rows)
-    last_error = None
-    quarantine_dir.mkdir(parents=True, exist_ok=True)
-    for attempt in range(2):
-        try:
-            raw_output = run_review_with_claude(claude_cmd, prompt)
-            reviewed = parse_review_output(raw_output, input_rows)
-            if output_path is not None:
-                write_jsonl(output_path, reviewed)
-            return reviewed
-        except Exception as exc:  # pragma: no cover - exercised in manual runs
-            last_error = exc
-    quarantine_path = quarantine_dir / f"review-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.failed.jsonl"
-    write_jsonl(quarantine_path, input_rows)
-    raise RuntimeError(json.dumps({"error": str(last_error), "quarantined": str(quarantine_path)}))
+    return run_llm_json_round(
+        input_rows,
+        claude_cmd=claude_cmd,
+        quarantine_dir=quarantine_dir,
+        output_path=output_path,
+        prompt_builder=build_review_prompt,
+        parser=parse_review_output,
+        quarantine_prefix="review",
+    )
 
 
 def review_rows_with_reviewer(
@@ -1619,6 +1800,10 @@ def with_case_hash(rows: Iterable[dict]) -> List[dict]:
     return [{**row, "case_hash": stable_sha1(row["text"])[:16]} for row in rows]
 
 
+def append_case_overlay(path: Path, rows: Sequence[dict]):
+    return append_unique_jsonl(path, with_case_hash(rows), "case_hash")
+
+
 def promote_reviewed_rows_to_staged(
     reviewed_rows: Sequence[dict],
     *,
@@ -1657,16 +1842,8 @@ def promote_reviewed_rows_to_staged(
             replay_rows.append(replay_row_from_review(row))
 
     training_count = append_unique_jsonl(staged_training_overlay, training_rows, "id")
-    regression_count = append_unique_jsonl(
-        staged_regression_overlay,
-        with_case_hash(regression_rows),
-        "case_hash",
-    )
-    replay_count = append_unique_jsonl(
-        staged_replay_overlay,
-        with_case_hash(replay_rows),
-        "case_hash",
-    )
+    regression_count = append_case_overlay(staged_regression_overlay, regression_rows)
+    replay_count = append_case_overlay(staged_replay_overlay, replay_rows)
     return {
         "training_promoted": training_count,
         "regression_promoted": regression_count,
@@ -1683,27 +1860,11 @@ def advance_staged_rows_to_accepted(
     accepted_regression_overlay: Path,
     accepted_replay_overlay: Path,
 ):
-    training_advanced = append_unique_jsonl(
-        accepted_training_overlay,
-        read_jsonl(staged_training_overlay),
-        "id",
-    )
-    regression_advanced = append_unique_jsonl(
-        accepted_regression_overlay,
-        read_jsonl(staged_regression_overlay),
-        "case_hash",
-    )
-    replay_advanced = append_unique_jsonl(
-        accepted_replay_overlay,
-        read_jsonl(staged_replay_overlay),
-        "case_hash",
-    )
+    training_advanced = append_unique_jsonl(accepted_training_overlay, read_jsonl(staged_training_overlay), "id")
+    regression_advanced = append_unique_jsonl(accepted_regression_overlay, read_jsonl(staged_regression_overlay), "case_hash")
+    replay_advanced = append_unique_jsonl(accepted_replay_overlay, read_jsonl(staged_replay_overlay), "case_hash")
 
-    for path in (
-        staged_training_overlay,
-        staged_regression_overlay,
-        staged_replay_overlay,
-    ):
+    for path in (staged_training_overlay, staged_regression_overlay, staged_replay_overlay):
         if path.exists():
             path.unlink()
 
@@ -1792,6 +1953,18 @@ def review_batch_is_healthy(metrics: dict) -> bool:
     return True
 
 
+def merged_review_resolution(source: dict, resolution: dict, **extra):
+    return {
+        **source,
+        "candidate_id": resolution["candidate_id"],
+        "final_intent": resolution["final_intent"],
+        "final_block": resolution["final_block"],
+        "confidence": resolution["confidence"],
+        "pattern_family": resolution["pattern_family"],
+        **extra,
+    }
+
+
 def review_rows_with_council(
     input_rows: Sequence[dict],
     *,
@@ -1799,21 +1972,22 @@ def review_rows_with_council(
     quarantine_dir: Path,
     output_dir: Path,
 ):
-    reviewer_outputs = {}
-    for reviewer_id in ("a", "b", "c"):
-        reviewer_outputs[reviewer_id] = review_rows_with_reviewer(
+    reviewer_outputs = {
+        reviewer_id: review_rows_with_reviewer(
             input_rows,
             claude_cmd=claude_cmd,
             quarantine_dir=quarantine_dir,
             reviewer_id=reviewer_id,
             output_path=output_dir / f"reviewed-{reviewer_id}.jsonl",
         )
-
+        for reviewer_id in ("a", "b", "c")
+    }
     consensus_rows = []
     merged_rows = []
     disputed_rows = []
-    input_by_id = {(row.get("id") or row.get("candidate_id")): row for row in input_rows}
-    for candidate_id in [row.get("id") or row.get("candidate_id") for row in input_rows]:
+    candidate_ids = [row.get("id") or row.get("candidate_id") for row in input_rows]
+    input_by_id = {candidate_id: row for candidate_id, row in zip(candidate_ids, input_rows)}
+    for candidate_id in candidate_ids:
         candidate_reviews = [
             row
             for rows in reviewer_outputs.values()
@@ -1834,18 +2008,13 @@ def review_rows_with_council(
             continue
         if consensus["route"] != "staged_training" or consensus["final_block"] is None:
             continue
-        source = input_by_id.get(candidate_id, {})
         merged_rows.append(
-            {
-                **source,
-                "candidate_id": candidate_id,
-                "final_intent": consensus["final_intent"],
-                "final_block": consensus["final_block"],
-                "confidence": consensus["confidence"],
-                "pattern_family": consensus["pattern_family"],
-                "promotion_route": consensus["route"],
-                "reviewer_ids": consensus["reviewer_ids"],
-            }
+            merged_review_resolution(
+                input_by_id.get(candidate_id, {}),
+                consensus,
+                promotion_route=consensus["route"],
+                reviewer_ids=consensus["reviewer_ids"],
+            )
         )
 
     write_jsonl(output_dir / "review-consensus.jsonl", consensus_rows)
@@ -1861,18 +2030,13 @@ def review_rows_with_council(
     for row in consolidated_rows:
         if row["route"] == "quarantine":
             continue
-        source = input_by_id.get(row["candidate_id"], {})
         merged_rows.append(
-            {
-                **source,
-                "candidate_id": row["candidate_id"],
-                "final_intent": row["final_intent"],
-                "final_block": row["final_block"],
-                "confidence": row["confidence"],
-                "pattern_family": row["pattern_family"],
-                "promotion_route": row["route"],
-                "resolution_reason": row["resolution_reason"],
-            }
+            merged_review_resolution(
+                input_by_id.get(row["candidate_id"], {}),
+                row,
+                promotion_route=row["route"],
+                resolution_reason=row["resolution_reason"],
+            )
         )
     return {
         "consensus_rows": consensus_rows,
@@ -2016,38 +2180,119 @@ def mine_rows(root: Path, limit: int):
     return rows
 
 
-def parse_mine_args(argv: Sequence[str]):
-    parser = argparse.ArgumentParser(description="Mine sanitized assistant clauses from Claude transcript JSONL files.")
-    parser.add_argument("--root", default=TRANSCRIPT_ROOT)
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--limit", type=int, default=600)
-    parser.add_argument("--include-safe", action="store_true")
+def arg(*flags, **kwargs):
+    return flags, kwargs
+
+
+STATE_DIR_ARG = arg("--state-dir", default=str(STATE_PATH))
+QUEUE_PATH_ARG = arg("--queue-path", default=QUEUE_PATH)
+LOG_PATH_ARG = arg("--log-path", default=LOG_PATH)
+TRAINING_PYTHON_ARG = arg("--training-python", default=TRAINING_PYTHON)
+CLAUDE_CMD_ARG = arg("--claude-cmd", default=REVIEW_CLAUDE_CMD)
+TRANSCRIPT_ROOT_ARG = arg("--transcript-root", default=TRANSCRIPT_ROOT)
+COMMON_RUNTIME_ARGS = [STATE_DIR_ARG, QUEUE_PATH_ARG, LOG_PATH_ARG, TRANSCRIPT_ROOT_ARG, TRAINING_PYTHON_ARG, CLAUDE_CMD_ARG]
+
+COMMAND_PARSER_SPECS = {
+    "mine": (
+        "Mine sanitized assistant clauses from Claude transcript JSONL files.",
+        [
+            arg("--root", default=TRANSCRIPT_ROOT),
+            arg("--output", required=True),
+            arg("--limit", type=int, default=600),
+            arg("--include-safe", action="store_true"),
+        ],
+    ),
+    "review": (
+        "Review sanitized learning candidates with a headless Claude CLI batch.",
+        [
+            arg("--batch", required=True),
+            arg("--output", required=True),
+            arg("--quarantine-dir", required=True),
+            arg("--claude-cmd", default=REVIEW_CLAUDE_CMD),
+            arg("--max-candidates", type=int, default=100),
+        ],
+    ),
+    "promote": (
+        "Promote Claude-reviewed rows into local overlay corpora.",
+        [
+            arg("--reviewed", required=True),
+            arg("--training-overlay", required=True),
+            arg("--regression-overlay", required=True),
+            arg("--replay-overlay", required=True),
+        ],
+    ),
+    "maybe-trigger": (
+        "Launch the learning cycle only when objective pending-queue thresholds are met.",
+        COMMON_RUNTIME_ARGS + [
+            arg("--reviewed-path", default=str(STATE_PATH / "reviewed-claude.jsonl")),
+            arg("--review-state-path", default=str(STATE_PATH / "review-state.json")),
+            arg("--pending-threshold", type=int, default=25),
+            arg("--same-reason-threshold", type=int, default=5),
+            arg("--same-family-threshold", type=int, default=4),
+            arg("--oldest-age-seconds", type=int, default=12 * 60 * 60),
+            arg("--cooldown-seconds", type=int, default=2 * 60 * 60),
+            arg("--foreground", action="store_true"),
+        ],
+    ),
+    "learning-cycle": (
+        "Run one iterative Assumption Guard learning cycle.",
+        COMMON_RUNTIME_ARGS + [
+            arg("--min-review-batch", type=int, default=10),
+            arg("--max-candidates", type=int, default=100),
+        ],
+    ),
+    "train": (
+        __doc__,
+        [
+            arg("--training-data", default=str(DEFAULT_DATASET)),
+            arg("--overlay-training-data", action="append", default=[]),
+            arg("--regression-cases", default=str(DEFAULT_REGRESSION)),
+            arg("--overlay-regression-cases", action="append", default=[]),
+            arg("--replay-cases", default=str(DEFAULT_REPLAY)),
+            arg("--overlay-replay-cases", action="append", default=[]),
+            arg("--output-model", default=str(DEFAULT_MODEL)),
+            arg("--output-tokenizer", default=str(DEFAULT_TOKENIZER)),
+            arg("--output-meta", default=str(DEFAULT_META)),
+            arg("--output-report", default=str(DEFAULT_REPORT)),
+            arg("--epochs", type=int, default=5),
+            arg("--batch-size", type=int, default=64),
+            arg("--learning-rate", type=float, default=2e-5),
+            arg("--weight-decay", type=float, default=0.01),
+            arg("--max-length", type=int, default=128),
+            arg("--seed", type=int, default=42),
+            arg("--skip-deberta", action="store_true"),
+        ],
+    ),
+    "replay": (
+        __doc__,
+        [
+            arg("--regression-cases", required=True),
+            arg("--model", required=True),
+            arg("--tokenizer", required=True),
+            arg("--meta", required=True),
+            arg("--output", required=True),
+        ],
+    ),
+}
+
+
+def parse_command_args(mode: str, argv: Sequence[str]):
+    description, arguments = COMMAND_PARSER_SPECS[mode]
+    parser = argparse.ArgumentParser(description=description)
+    for flags, kwargs in arguments:
+        parser.add_argument(*flags, **kwargs)
     return parser.parse_args(list(argv))
 
-
 def command_mine(argv: Sequence[str], *, emit_output: bool = True):
-    args = parse_mine_args(argv)
+    args = parse_command_args("mine", argv)
     rows = mine_rows(Path(args.root), args.limit)
     output_path = Path(args.output)
     write_jsonl(output_path, rows)
-    payload = {"rows": len(rows), "output": str(output_path)}
-    if emit_output:
-        print(json.dumps(payload))
-    return payload
-
-
-def parse_review_args(argv: Sequence[str]):
-    parser = argparse.ArgumentParser(description="Review sanitized learning candidates with a headless Claude CLI batch.")
-    parser.add_argument("--batch", required=True)
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--quarantine-dir", required=True)
-    parser.add_argument("--claude-cmd", default=REVIEW_CLAUDE_CMD)
-    parser.add_argument("--max-candidates", type=int, default=100)
-    return parser.parse_args(list(argv))
+    return emit_payload({"rows": len(rows), "output": str(output_path)}, emit_output)
 
 
 def command_review(argv: Sequence[str], *, emit_output: bool = True):
-    args = parse_review_args(argv)
+    args = parse_command_args("review", argv)
     batch_path = Path(args.batch)
     rows = read_jsonl(batch_path)[: args.max_candidates]
     reviewed = review_rows_with_claude(
@@ -2056,84 +2301,51 @@ def command_review(argv: Sequence[str], *, emit_output: bool = True):
         quarantine_dir=Path(args.quarantine_dir),
         output_path=Path(args.output),
     )
-    payload = {"reviewed": len(reviewed), "output": args.output}
-    if emit_output:
-        print(json.dumps(payload))
-    return payload
-
-
-def parse_promote_args(argv: Sequence[str]):
-    parser = argparse.ArgumentParser(description="Promote Claude-reviewed rows into local overlay corpora.")
-    parser.add_argument("--reviewed", required=True)
-    parser.add_argument("--training-overlay", required=True)
-    parser.add_argument("--regression-overlay", required=True)
-    parser.add_argument("--replay-overlay", required=True)
-    return parser.parse_args(list(argv))
+    return emit_payload({"reviewed": len(reviewed), "output": args.output}, emit_output)
 
 
 def command_promote(argv: Sequence[str], *, emit_output: bool = True):
-    args = parse_promote_args(argv)
+    args = parse_command_args("promote", argv)
     payload = promote_reviewed_rows(
         read_jsonl(Path(args.reviewed)),
         training_overlay=Path(args.training_overlay),
         regression_overlay=Path(args.regression_overlay),
         replay_overlay=Path(args.replay_overlay),
     )
-    if emit_output:
-        print(json.dumps(payload))
-    return payload
-
-
-def parse_maybe_trigger_args(argv: Sequence[str]):
-    parser = argparse.ArgumentParser(description="Launch the learning cycle only when objective pending-queue thresholds are met.")
-    parser.add_argument("--state-dir", default=str(STATE_PATH))
-    parser.add_argument("--queue-path", default=QUEUE_PATH)
-    parser.add_argument("--log-path", default=LOG_PATH)
-    parser.add_argument("--reviewed-path", default=str(STATE_PATH / "reviewed-claude.jsonl"))
-    parser.add_argument("--review-state-path", default=str(STATE_PATH / "review-state.json"))
-    parser.add_argument("--training-python", default=TRAINING_PYTHON)
-    parser.add_argument("--claude-cmd", default=REVIEW_CLAUDE_CMD)
-    parser.add_argument("--transcript-root", default=TRANSCRIPT_ROOT)
-    parser.add_argument("--pending-threshold", type=int, default=25)
-    parser.add_argument("--same-reason-threshold", type=int, default=5)
-    parser.add_argument("--same-family-threshold", type=int, default=4)
-    parser.add_argument("--oldest-age-seconds", type=int, default=12 * 60 * 60)
-    parser.add_argument("--cooldown-seconds", type=int, default=2 * 60 * 60)
-    parser.add_argument("--foreground", action="store_true")
-    return parser.parse_args(list(argv))
+    return emit_payload(payload, emit_output)
 
 
 def command_maybe_trigger(argv: Sequence[str], *, emit_output: bool = True):
-    args = parse_maybe_trigger_args(argv)
-    state_dir = Path(args.state_dir)
-    queue_path = Path(args.queue_path)
-    reviewed_path = Path(args.reviewed_path)
-    review_state_path = Path(args.review_state_path)
-    learning_lock_path = state_dir / "learning-cycle.lock"
-    trigger_lock_path = state_dir / "trigger-check.lock"
+    args = parse_command_args("maybe-trigger", argv)
+    paths = command_paths_for_state_dir(
+        Path(args.state_dir),
+        queue_path=Path(args.queue_path),
+        log_path=Path(args.log_path),
+        reviewed_path=Path(args.reviewed_path),
+        review_state_path=Path(args.review_state_path),
+    )
     now = datetime.now(timezone.utc).isoformat()
 
     try:
-        with file_lock(trigger_lock_path):
-            queue_rows = read_jsonl(queue_path)
-            reviewed_rows = read_jsonl(reviewed_path)
+        with file_lock(paths["trigger_lock_path"]):
+            queue_rows = read_jsonl(paths["queue_path"])
+            reviewed_rows = read_jsonl(paths["reviewed_path"])
             pending = pending_learning_rows(queue_rows, reviewed_rows)
-            state = read_state_json(review_state_path)
+            state = read_state_json(paths["review_state_path"])
 
-            if learning_lock_path.exists():
-                state.update(
-                    {
-                        "last_check_ts": now,
-                        "pending_rows": len(pending),
-                        "last_decision": "skipped",
-                        "last_skip_reason": "learning_cycle_running",
-                    }
+            if paths["learning_lock_path"].exists():
+                update_state_file(
+                    paths["review_state_path"],
+                    state,
+                    last_check_ts=now,
+                    pending_rows=len(pending),
+                    last_decision="skipped",
+                    last_skip_reason="learning_cycle_running",
                 )
-                write_state_json(review_state_path, state)
-                payload = {"status": "skipped", "reason": "learning_cycle_running", "pending_rows": len(pending)}
-                if emit_output:
-                    print(json.dumps(payload))
-                return payload
+                return emit_payload(
+                    fail_payload("learning_cycle_running", pending_rows=len(pending)),
+                    emit_output,
+                )
 
             reason, metrics = trigger_reason_for_rows(
                 pending,
@@ -2144,292 +2356,159 @@ def command_maybe_trigger(argv: Sequence[str], *, emit_output: bool = True):
             )
             remaining = cooldown_remaining_seconds(state, args.cooldown_seconds)
             if not reason:
-                state.update(
-                    {
-                        "last_check_ts": now,
-                        **metrics,
-                        "last_decision": "skipped",
-                        "last_skip_reason": "threshold_not_met",
-                    }
+                update_state_file(
+                    paths["review_state_path"],
+                    state,
+                    last_check_ts=now,
+                    last_decision="skipped",
+                    last_skip_reason="threshold_not_met",
+                    **metrics,
                 )
-                write_state_json(review_state_path, state)
-                payload = {"status": "skipped", "reason": "threshold_not_met", **metrics}
-                if emit_output:
-                    print(json.dumps(payload))
-                return payload
+                return emit_payload(fail_payload("threshold_not_met", **metrics), emit_output)
 
             if remaining > 0:
-                state.update(
-                    {
-                        "last_check_ts": now,
-                        **metrics,
-                        "last_decision": "skipped",
-                        "last_skip_reason": "cooldown_active",
-                        "cooldown_remaining_seconds": remaining,
-                    }
-                )
-                write_state_json(review_state_path, state)
-                payload = {"status": "skipped", "reason": "cooldown_active", "cooldown_remaining_seconds": remaining, **metrics}
-                if emit_output:
-                    print(json.dumps(payload))
-                return payload
-
-            command = self_command(
-                "learning-cycle",
-                "--state-dir",
-                str(state_dir),
-                "--queue-path",
-                str(queue_path),
-                "--log-path",
-                str(Path(args.log_path)),
-                "--transcript-root",
-                args.transcript_root,
-                "--claude-cmd",
-                args.claude_cmd,
-                "--training-python",
-                args.training_python,
-            )
-            if args.foreground:
-                result = subprocess.run(command, capture_output=True, text=True, cwd=str(WORKSPACE_ROOT), check=False)
-                if result.returncode != 0:
-                    raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "learning cycle failed")
-                launch_details = {"mode": "foreground", "stdout": result.stdout.strip()}
-            else:
-                logs_dir = state_dir / "logs"
-                logs_dir.mkdir(parents=True, exist_ok=True)
-                launched_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-                output_log = logs_dir / f"learning-cycle-{launched_at}.log"
-                with output_log.open("a", encoding="utf-8") as handle:
-                    subprocess.Popen(
-                        command,
-                        cwd=str(WORKSPACE_ROOT),
-                        stdout=handle,
-                        stderr=handle,
-                        stdin=subprocess.DEVNULL,
-                        start_new_session=True,
-                        close_fds=True,
-                    )
-                launch_details = {"mode": "detached", "log_path": str(output_log)}
-
-            state.update(
-                {
-                    "last_check_ts": now,
-                    "last_cycle_ts": now,
-                    "last_trigger_reason": reason,
-                    "last_decision": "launched",
+                update_state_file(
+                    paths["review_state_path"],
+                    state,
+                    last_check_ts=now,
+                    last_decision="skipped",
+                    last_skip_reason="cooldown_active",
+                    cooldown_remaining_seconds=remaining,
                     **metrics,
-                }
+                )
+                return emit_payload(
+                    fail_payload("cooldown_active", cooldown_remaining_seconds=remaining, **metrics),
+                    emit_output,
+                )
+
+            launch_details = launch_learning_cycle(paths, args, foreground=args.foreground)
+            update_state_file(
+                paths["review_state_path"],
+                state,
+                last_check_ts=now,
+                last_cycle_ts=now,
+                last_trigger_reason=reason,
+                last_decision="launched",
+                **metrics,
             )
-            write_state_json(review_state_path, state)
-            payload = {"status": "launched", "trigger_reason": reason, **metrics, **launch_details}
-            if emit_output:
-                print(json.dumps(payload))
-            return payload
+            return emit_payload(success_payload("launched", trigger_reason=reason, **metrics, **launch_details), emit_output)
     except FileExistsError:
-        payload = {"status": "skipped", "reason": "trigger_check_running"}
-        if emit_output:
-            print(json.dumps(payload))
-        return payload
-
-
-def parse_learning_cycle_args(argv: Sequence[str]):
-    parser = argparse.ArgumentParser(description="Run one iterative Assumption Guard learning cycle.")
-    parser.add_argument("--state-dir", default=str(STATE_PATH))
-    parser.add_argument("--queue-path", default=QUEUE_PATH)
-    parser.add_argument("--log-path", default=LOG_PATH)
-    parser.add_argument("--transcript-root", default=TRANSCRIPT_ROOT)
-    parser.add_argument("--min-review-batch", type=int, default=10)
-    parser.add_argument("--max-candidates", type=int, default=100)
-    parser.add_argument("--training-python", default=TRAINING_PYTHON)
-    parser.add_argument("--claude-cmd", default=REVIEW_CLAUDE_CMD)
-    return parser.parse_args(list(argv))
+        return emit_payload(fail_payload("trigger_check_running"), emit_output)
 
 
 def command_learning_cycle(argv: Sequence[str], *, emit_output: bool = True):
-    args = parse_learning_cycle_args(argv)
-    state_dir = Path(args.state_dir)
-    queue_path = Path(args.queue_path)
-    log_path = Path(args.log_path)
-    lock_path = state_dir / "learning-cycle.lock"
-    mined_path = state_dir / "mined-review-input.jsonl"
-    review_batch_path = state_dir / "review-batch.jsonl"
-    quarantine_dir = state_dir / "quarantine"
-    staged_training_overlay = state_dir / "staged-training-overlay.jsonl"
-    staged_regression_overlay = state_dir / "staged-regression-overlay.jsonl"
-    staged_replay_overlay = state_dir / "staged-replay-overlay.jsonl"
-    accepted_training_overlay = state_dir / "accepted-training-overlay.jsonl"
-    accepted_regression_overlay = state_dir / "accepted-regression-overlay.jsonl"
-    accepted_replay_overlay = state_dir / "accepted-replay-overlay.jsonl"
-    reviewed_merged_path = state_dir / "reviewed-claude.jsonl"
-    promotion_manifest_path = state_dir / "promotion-manifest.jsonl"
-    current_report_path = state_dir / "current-model-report.json"
-    candidates_root = state_dir / "candidates"
-    candidates_root.mkdir(parents=True, exist_ok=True)
+    args = parse_command_args("learning-cycle", argv)
+    paths = command_paths_for_state_dir(
+        Path(args.state_dir),
+        queue_path=Path(args.queue_path),
+        log_path=Path(args.log_path),
+    )
+    paths["candidates_root"].mkdir(parents=True, exist_ok=True)
 
     try:
-        with file_lock(lock_path):
+        with file_lock(paths["learning_lock_path"]):
             mined_rows = mine_rows(Path(args.transcript_root), limit=max(args.max_candidates * 6, 600))
-            write_jsonl(mined_path, mined_rows)
+            write_jsonl(paths["mined_path"], mined_rows)
 
             review_rows = build_review_batch_rows(
-                [queue_path],
-                [mined_path],
-                [log_path],
+                [paths["queue_path"]],
+                [paths["mined_path"]],
+                [paths["log_path"]],
                 limit=args.max_candidates,
             )
-            write_jsonl(review_batch_path, review_rows)
+            write_jsonl(paths["review_batch_path"], review_rows)
             reason_counts = Counter(row.get("candidate_reason", "unknown") for row in review_rows)
             if len(review_rows) < args.min_review_batch and max(reason_counts.values(), default=0) < 3:
-                payload = {"status": "skipped", "reason": "insufficient_review_batch", "rows": len(review_rows)}
-                if emit_output:
-                    print(json.dumps(payload))
-                return payload
+                return emit_payload(fail_payload("insufficient_review_batch", rows=len(review_rows)), emit_output)
 
             council_result = review_rows_with_council(
                 review_rows,
                 claude_cmd=args.claude_cmd,
-                quarantine_dir=quarantine_dir,
-                output_dir=state_dir,
+                quarantine_dir=paths["quarantine_dir"],
+                output_dir=paths["state_dir"],
             )
             merged_rows = council_result["merged_rows"]
-            append_unique_jsonl(reviewed_merged_path, merged_rows, "candidate_id")
+            append_unique_jsonl(paths["reviewed_path"], merged_rows, "candidate_id")
 
             promote_summary = promote_reviewed_rows_to_staged(
                 merged_rows,
-                staged_training_overlay=staged_training_overlay,
-                staged_regression_overlay=staged_regression_overlay,
-                staged_replay_overlay=staged_replay_overlay,
-                accepted_replay_overlay=accepted_replay_overlay,
+                staged_training_overlay=paths["staged_training_overlay"],
+                staged_regression_overlay=paths["staged_regression_overlay"],
+                staged_replay_overlay=paths["staged_replay_overlay"],
+                accepted_replay_overlay=paths["accepted_replay_overlay"],
             )
             health = review_batch_health_metrics(council_result["consensus_rows"])
             if not review_batch_is_healthy(health):
-                payload = {
-                    "status": "captured",
-                    "promoted": promote_summary,
-                    "retrain": False,
-                    "reason": "unhealthy_review_batch",
-                    "health": health,
-                }
-                if emit_output:
-                    print(json.dumps(payload))
-                return payload
+                return emit_payload(
+                    fail_payload(
+                        "unhealthy_review_batch",
+                        status="captured",
+                        promoted=promote_summary,
+                        retrain=False,
+                        health=health,
+                    ),
+                    emit_output,
+                )
             if not should_retrain(promote_summary, merged_rows):
-                payload = {"status": "captured", "promoted": promote_summary, "retrain": False}
-                if emit_output:
-                    print(json.dumps(payload))
-                return payload
+                return emit_payload(success_payload("captured", promoted=promote_summary, retrain=False), emit_output)
 
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            candidate_dir = candidates_root / timestamp
-            candidate_dir.mkdir(parents=True, exist_ok=True)
-            model_path = candidate_dir / "assumption-guard-v2.onnx"
-            tokenizer_path = candidate_dir / "assumption-guard-v2-tokenizer.json"
-            meta_path = candidate_dir / "assumption-guard-v2-meta.json"
-            report_path = candidate_dir / "assumption-guard-v2-report.json"
+            artifacts = candidate_artifact_paths(paths["candidates_root"], timestamp)
+            artifacts["candidate_dir"].mkdir(parents=True, exist_ok=True)
 
             try:
-                run_self_json_command(
-                    "train",
-                    "--overlay-training-data",
-                    str(accepted_training_overlay),
-                    "--overlay-training-data",
-                    str(staged_training_overlay),
-                    "--overlay-regression-cases",
-                    str(accepted_regression_overlay),
-                    "--overlay-regression-cases",
-                    str(staged_regression_overlay),
-                    "--overlay-replay-cases",
-                    str(accepted_replay_overlay),
-                    "--overlay-replay-cases",
-                    str(staged_replay_overlay),
-                    "--output-model",
-                    str(model_path),
-                    "--output-tokenizer",
-                    str(tokenizer_path),
-                    "--output-meta",
-                    str(meta_path),
-                    "--output-report",
-                    str(report_path),
-                    env_overrides={"ASSUMPTION_GUARD_DISABLE": "1"},
-                    python_executable=args.training_python,
-                )
+                train_candidate_artifacts(paths, args, artifacts)
             except RuntimeError as exc:
-                payload = {
-                    "status": "captured",
-                    "promoted": promote_summary,
-                    "retrain": False,
-                    "reason": "train_failed",
-                    "error": str(exc),
-                }
-                if emit_output:
-                    print(json.dumps(payload))
-                return payload
+                return emit_payload(
+                    fail_payload(
+                        "train_failed",
+                        status="captured",
+                        promoted=promote_summary,
+                        retrain=False,
+                        error=str(exc),
+                    ),
+                    emit_output,
+                )
 
-            candidate_report = json.loads(report_path.read_text())
-            fallback_report_path = current_report_path if current_report_path.exists() else DEFAULT_REPORT
-            current_report = json.loads(Path(fallback_report_path).read_text())
-            family_metrics = targeted_family_metrics(candidate_report)
-            accepted = (
-                candidate_report["regression_results"]["matched"] == candidate_report["regression_results"]["total"]
-                and candidate_report["replay_results"]["block_recall"] >= 0.95
-                and candidate_report["replay_results"]["pass_recall"] >= 0.95
-                and all(value >= 0.95 for value in family_metrics.values())
-                and better_than_current(candidate_report, current_report)
-            )
+            candidate_report = read_json(artifacts["report_path"])
+            fallback_report_path = paths["current_report_path"] if paths["current_report_path"].exists() else DEFAULT_REPORT
+            current_report = read_json(Path(fallback_report_path))
+            accepted, family_metrics = candidate_is_promotable(candidate_report, current_report)
             if not accepted:
-                payload = {"status": "trained", "promoted": False, "candidate_dir": str(candidate_dir)}
-                if emit_output:
-                    print(json.dumps(payload))
-                return payload
+                return emit_payload(
+                    success_payload("trained", promoted=False, candidate_dir=str(artifacts["candidate_dir"])),
+                    emit_output,
+                )
 
-            live_model = PACKAGE_DIR / "assumption-guard-v2.onnx"
-            live_tokenizer = PACKAGE_DIR / "assumption-guard-v2-tokenizer.json"
-            live_meta = PACKAGE_DIR / "assumption-guard-v2-meta.json"
-            os.replace(model_path, live_model)
-            os.replace(tokenizer_path, live_tokenizer)
-            os.replace(meta_path, live_meta)
+            promote_candidate_assets(artifacts)
             advance_summary = advance_staged_rows_to_accepted(
-                staged_training_overlay=staged_training_overlay,
-                staged_regression_overlay=staged_regression_overlay,
-                staged_replay_overlay=staged_replay_overlay,
-                accepted_training_overlay=accepted_training_overlay,
-                accepted_regression_overlay=accepted_regression_overlay,
-                accepted_replay_overlay=accepted_replay_overlay,
+                staged_training_overlay=paths["staged_training_overlay"],
+                staged_regression_overlay=paths["staged_regression_overlay"],
+                staged_replay_overlay=paths["staged_replay_overlay"],
+                accepted_training_overlay=paths["accepted_training_overlay"],
+                accepted_regression_overlay=paths["accepted_regression_overlay"],
+                accepted_replay_overlay=paths["accepted_replay_overlay"],
             )
             append_unique_jsonl(
-                promotion_manifest_path,
-                [
-                    {
-                        "manifest_id": stable_sha1(f"{timestamp}:{candidate_dir}")[:16],
-                        "candidate_dir": str(candidate_dir),
-                        "selected_candidate": candidate_report.get("selected_candidate"),
-                        "promoted_at": datetime.now(timezone.utc).isoformat(),
-                        "reviewed_candidate_ids": [row.get("candidate_id") for row in merged_rows],
-                        **advance_summary,
-                    }
-                ],
+                paths["promotion_manifest_path"],
+                [promotion_manifest_row(artifacts["candidate_dir"], timestamp, candidate_report, merged_rows, advance_summary)],
                 "manifest_id",
             )
-            current_report_path.write_text(json.dumps(candidate_report, indent=2))
-            payload = {
-                "status": "promoted",
-                "candidate_dir": str(candidate_dir),
-                "family_metrics": family_metrics,
-                "advanced": advance_summary,
-            }
-            if emit_output:
-                print(json.dumps(payload))
-            return payload
+            write_json(paths["current_report_path"], candidate_report)
+            return emit_payload(
+                success_payload(
+                    "promoted",
+                    candidate_dir=str(artifacts["candidate_dir"]),
+                    family_metrics=family_metrics,
+                    advanced=advance_summary,
+                ),
+                emit_output,
+            )
     except FileExistsError:
-        payload = {"status": "skipped", "reason": "lock_exists", "lock_path": str(lock_path)}
-        if emit_output:
-            print(json.dumps(payload))
-        return payload
-
-
-DEFAULT_MODEL = Path(MODEL_PATH)
-DEFAULT_TOKENIZER = Path(TOKENIZER_PATH)
-DEFAULT_META = Path(META_PATH)
+        return emit_payload(
+            fail_payload("lock_exists", lock_path=str(paths["learning_lock_path"])),
+            emit_output,
+        )
 
 ort = None
 QuantType = None
@@ -2498,7 +2577,6 @@ def ensure_training_dependencies():
 
 
 LABEL_TO_ID = {label: index for index, label in enumerate(v2.LABELS)}
-ID_TO_LABEL = {index: label for label, index in LABEL_TO_ID.items()}
 
 
 @dataclass
@@ -2531,29 +2609,6 @@ class TextDataset(DatasetBase):
             "attention_mask": encoded["attention_mask"].squeeze(0),
             "labels": torch.tensor(LABEL_TO_ID[row["intent"]], dtype=torch.long),
         }
-
-
-def parse_train_args(argv: Sequence[str]):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--training-data", default=str(DEFAULT_DATASET))
-    parser.add_argument("--overlay-training-data", action="append", default=[])
-    parser.add_argument("--regression-cases", default=str(DEFAULT_REGRESSION))
-    parser.add_argument("--overlay-regression-cases", action="append", default=[])
-    parser.add_argument("--replay-cases", default=str(DEFAULT_REPLAY))
-    parser.add_argument("--overlay-replay-cases", action="append", default=[])
-    parser.add_argument("--output-model", default=str(DEFAULT_MODEL))
-    parser.add_argument("--output-tokenizer", default=str(DEFAULT_TOKENIZER))
-    parser.add_argument("--output-meta", default=str(DEFAULT_META))
-    parser.add_argument("--output-report", default=str(DEFAULT_REPORT))
-    parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--learning-rate", type=float, default=2e-5)
-    parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--max-length", type=int, default=128)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--skip-deberta", action="store_true")
-    return parser.parse_args(list(argv))
-
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -2740,21 +2795,6 @@ def select_threshold(dev_rows, predict_fn, regression_cases):
             ),
         )
     return winning["threshold"], search_results
-
-
-def predict_cases_with_probs(texts: Sequence[str], predict_fn, threshold_map: Sequence[float]):
-    results = []
-    for text in texts:
-        probabilities, labels = predict_fn([text])
-        p_block = probabilities[0]
-        intent = labels[0]
-        matched_by_threshold = {
-            f"{threshold:.2f}": (p_block >= threshold) for threshold in threshold_map
-        }
-        results.append({"text": text, "p_block": p_block, "intent": intent, "matched_by_threshold": matched_by_threshold})
-    return results
-
-
 def infer_safe_intent(clause: str) -> str:
     inferred = v2.hard_pass_intent(clause)
     if inferred:
@@ -2833,6 +2873,52 @@ def runtime_decision_for_text(text: str, predict_fn, threshold: float) -> dict:
         "p_block": max((item["p_block"] for item in blocked_decisions), default=0.0),
         "decisions": blocked_decisions,
     }
+
+
+def scored_case_rows(cases: Sequence[dict], predict_fn, threshold: float):
+    rows = []
+    for case in cases:
+        result = runtime_decision_for_text(case["text"], predict_fn, threshold)
+        blocked = result["blocked"]
+        rows.append(
+            {
+                "group": case.get("group", ""),
+                "text": case["text"],
+                "expected_block": case["expected_block"],
+                "blocked": blocked,
+                "matched": blocked == case["expected_block"],
+                "p_block": result["p_block"],
+                "intent": result["intent"],
+            }
+        )
+    return rows
+
+
+def classification_examples(rows: Sequence[dict], runtime_results: Sequence[dict], threshold: float):
+    low_margin = sorted(
+        [
+            {
+                "text": row["text"],
+                "intent": row["intent"],
+                "predicted_intent": result["intent"],
+                "p_block": result["p_block"],
+                "distance_to_threshold": abs(result["p_block"] - threshold),
+            }
+            for row, result in zip(rows, runtime_results)
+        ],
+        key=lambda item: item["distance_to_threshold"],
+    )
+    false_negatives = [
+        {"text": row["text"], "intent": row["intent"], "predicted_intent": result["intent"], "p_block": result["p_block"]}
+        for row, result in zip(rows, runtime_results)
+        if binary_label(row["intent"]) and not result["blocked"]
+    ]
+    false_positives = [
+        {"text": row["text"], "intent": row["intent"], "predicted_intent": result["intent"], "p_block": result["p_block"]}
+        for row, result in zip(rows, runtime_results)
+        if (not binary_label(row["intent"])) and result["blocked"]
+    ]
+    return low_margin[:20], false_negatives[:15], false_positives[:15]
 
 
 def baseline_pipeline(min_class_count: int):
@@ -2967,13 +3053,6 @@ def train_transformer_candidate(
             optimizer.step()
             scheduler.step()
 
-        dev_probs, dev_labels, _ = predict_transformer(
-            model,
-            tokenizer,
-            [row["text"] for row in rows.dev],
-            args.max_length,
-            device,
-        )
         predict_fn = lambda texts: predict_transformer(model, tokenizer, texts, args.max_length, device)[:2]
         threshold, threshold_search = select_threshold(rows.dev, predict_fn, regression_cases)
         dev_runtime_results = [runtime_decision_for_text(row["text"], predict_fn, threshold) for row in rows.dev]
@@ -3067,37 +3146,8 @@ def evaluate_candidate(
     dev_results, dev_confusion, dev_per_intent = evaluate_rows(rows.dev)
     test_results, test_confusion, test_per_intent = evaluate_rows(rows.test)
 
-    regression_rows = []
-    for case in regression_cases:
-        result = runtime_decision_for_text(case["text"], predict_fn, threshold)
-        blocked = result["blocked"]
-        regression_rows.append(
-            {
-                "group": case.get("group", ""),
-                "text": case["text"],
-                "expected_block": case["expected_block"],
-                "blocked": blocked,
-                "matched": blocked == case["expected_block"],
-                "p_block": result["p_block"],
-                "intent": result["intent"],
-            }
-        )
-
-    replay_rows = []
-    for case in replay_cases:
-        result = runtime_decision_for_text(case["text"], predict_fn, threshold)
-        blocked = result["blocked"]
-        replay_rows.append(
-            {
-                "group": case.get("group", ""),
-                "text": case["text"],
-                "expected_block": case["expected_block"],
-                "blocked": blocked,
-                "matched": blocked == case["expected_block"],
-                "p_block": result["p_block"],
-                "intent": result["intent"],
-            }
-        )
+    regression_rows = scored_case_rows(regression_cases, predict_fn, threshold)
+    replay_rows = scored_case_rows(replay_cases, predict_fn, threshold)
 
     replay_confusion = compute_binary_metrics(
         [case["expected_block"] for case in replay_cases],
@@ -3112,27 +3162,7 @@ def evaluate_candidate(
             else 1.0
         )
 
-    low_margin = []
-    for row, result in zip(rows.test, test_results):
-        low_margin.append(
-            {
-                "text": row["text"],
-                "intent": row["intent"],
-                "predicted_intent": result["intent"],
-                "p_block": result["p_block"],
-                "distance_to_threshold": abs(result["p_block"] - threshold),
-            }
-        )
-    low_margin.sort(key=lambda item: item["distance_to_threshold"])
-
-    false_negatives = []
-    false_positives = []
-    for row, result in zip(rows.test, test_results):
-        blocked = result["blocked"]
-        if binary_label(row["intent"]) and not blocked:
-            false_negatives.append({"text": row["text"], "intent": row["intent"], "predicted_intent": result["intent"], "p_block": result["p_block"]})
-        elif (not binary_label(row["intent"])) and blocked:
-            false_positives.append({"text": row["text"], "intent": row["intent"], "predicted_intent": result["intent"], "p_block": result["p_block"]})
+    low_margin, false_negatives, false_positives = classification_examples(rows.test, test_results, threshold)
 
     candidate = {
         "name": name,
@@ -3154,9 +3184,9 @@ def evaluate_candidate(
             "rows": replay_rows,
             "targeted_family_accuracy": targeted_family_accuracy,
         },
-        "false_negatives": false_negatives[:15],
-        "false_positives": false_positives[:15],
-        "low_margin_examples": low_margin[:20],
+        "false_negatives": false_negatives,
+        "false_positives": false_positives,
+        "low_margin_examples": low_margin,
     }
     if kind == "transformer":
         candidate["tokenizer"] = tokenizer
@@ -3327,192 +3357,71 @@ def benchmark_latency(meta: dict, tokenizer_path: Path, model_path: Path, sample
     return {"p50_ms": p50, "p95_ms": p95, "batch20_ms": multi_duration}
 
 
-def command_train(argv: Sequence[str], *, emit_output: bool = True):
-    ensure_training_dependencies()
-    args = parse_train_args(argv)
-    set_seed(args.seed)
-
-    dataset_path = Path(args.training_data)
-    regression_path = Path(args.regression_cases)
-    replay_path = Path(args.replay_cases)
-    output_model = Path(args.output_model)
-    output_tokenizer = Path(args.output_tokenizer)
-    output_meta = Path(args.output_meta)
-    output_report = Path(args.output_report)
-
-    output_model.parent.mkdir(parents=True, exist_ok=True)
-
-    rows = load_rows(dataset_path)
+def load_training_inputs(args):
     overlay_rows = merge_rows(*(load_rows(Path(path)) for path in args.overlay_training_data))
-    rows = merge_rows(rows, overlay_rows)
+    rows = merge_rows(load_rows(Path(args.training_data)), overlay_rows)
     splits = split_rows(rows)
-    regression_cases = merge_cases(load_cases(regression_path), *(load_cases(Path(path)) for path in args.overlay_regression_cases))
-    replay_cases = merge_cases(load_cases(replay_path), *(load_cases(Path(path)) for path in args.overlay_replay_cases))
+    regression_cases = merge_cases(
+        load_cases(Path(args.regression_cases)),
+        *(load_cases(Path(path)) for path in args.overlay_regression_cases),
+    )
+    replay_cases = merge_cases(
+        load_cases(Path(args.replay_cases)),
+        *(load_cases(Path(path)) for path in args.overlay_replay_cases),
+    )
+    return rows, overlay_rows, splits, regression_cases, replay_cases
 
-    candidates = []
-    candidates.append(run_baseline_candidate(splits, regression_cases, replay_cases))
+
+def append_candidate_result(candidates: List[dict], factory, *, name: str, kind: str, regression_total: int, replay_total: int):
     try:
-        candidates.append(
-            train_transformer_candidate(
-                candidate_name="minilm_l6",
-                model_name="sentence-transformers/all-MiniLM-L6-v2",
-                rows=splits,
-                args=args,
-                regression_cases=regression_cases,
-                replay_cases=replay_cases,
-            )
-        )
+        candidates.append(factory())
     except Exception as exc:  # pragma: no cover - exercised during manual runs
         candidates.append(
             failed_candidate(
-                name="minilm_l6",
-                kind="transformer",
+                name=name,
+                kind=kind,
                 exc=exc,
-                regression_total=len(regression_cases),
-                replay_total=len(replay_cases),
+                regression_total=regression_total,
+                replay_total=replay_total,
             )
         )
-    if not args.skip_deberta:
-        try:
-            candidates.append(
-                train_transformer_candidate(
-                    candidate_name="deberta_v3_small",
-                    model_name="microsoft/deberta-v3-small",
-                    rows=splits,
-                    args=args,
-                    regression_cases=regression_cases,
-                    replay_cases=replay_cases,
-                )
-            )
-        except Exception as exc:  # pragma: no cover - exercised during manual runs
-            candidates.append(
-                failed_candidate(
-                    name="deberta_v3_small",
-                    kind="transformer",
-                    exc=exc,
-                    regression_total=len(regression_cases),
-                    replay_total=len(replay_cases),
-                )
-            )
 
-    selected = choose_candidate([candidate for candidate in candidates if "error" not in candidate])
-    if selected["kind"] != "transformer":
-        transformer_candidates = [
-            candidate
-            for candidate in candidates
-            if candidate.get("kind") == "transformer" and "error" not in candidate
-        ]
-        if not transformer_candidates:
-            failure_report = {
-                "dataset": {
-                    "rows": len(rows),
-                    "train": len(splits.train),
-                    "dev": len(splits.dev),
-                    "test": len(splits.test),
-                    "overlay_rows": len(overlay_rows),
-                    "label_counts": {
-                        label: sum(1 for row in rows if row["intent"] == label) for label in v2.LABELS
-                    },
-                },
-                "candidates": [],
-                "selected_candidate": selected["name"],
-                "regression_results": {
-                    "matched": selected["regression"]["matched"],
-                    "total": selected["regression"]["total"],
-                    "rows": selected["regression"]["rows"],
-                },
-                "replay_results": {
-                    "matched": selected["replay"]["matched"],
-                    "total": selected["replay"]["total"],
-                    "block_recall": selected["replay"]["block_recall"],
-                    "pass_recall": selected["replay"]["pass_recall"],
-                    "targeted_family_accuracy": selected["replay"].get("targeted_family_accuracy", {}),
-                    "rows": selected["replay"]["rows"],
-                },
-                "evaluation": {
-                    "test_confusion": selected["test"]["confusion"],
-                    "per_intent": selected["test"].get("per_intent", {}),
-                    "false_negatives": selected.get("false_negatives", []),
-                    "false_positives": selected.get("false_positives", []),
-                    "low_margin_examples": selected.get("low_margin_examples", []),
-                },
-                "onnx_parity_max_abs_delta": None,
-                "latency": None,
-                "acceptance": {
-                    "meets_acceptance_bar": False,
-                    "reason": "no_transformer_candidate",
-                },
-            }
-            for candidate in candidates:
-                if "error" in candidate:
-                    failure_report["candidates"].append(candidate)
-                else:
-                    failure_report["candidates"].append(
-                        {
-                            "name": candidate["name"],
-                            "kind": candidate["kind"],
-                            "model_name": candidate.get("model_name"),
-                            "threshold": candidate["threshold"],
-                            "dev_confusion": candidate["dev"]["confusion"],
-                            "test_confusion": candidate["test"]["confusion"],
-                            "regression_matched": candidate["regression"]["matched"],
-                            "regression_total": candidate["regression"]["total"],
-                            "replay_block_recall": candidate["replay"]["block_recall"],
-                            "replay_pass_recall": candidate["replay"]["pass_recall"],
-                        }
-                    )
-            output_report.write_text(json.dumps(failure_report, indent=2))
-            payload = {
-                "status": "failed",
-                "reason": "no_transformer_candidate",
-                "selected_candidate": selected["name"],
-                "report": str(output_report),
-                "candidate_errors": [candidate["error"] for candidate in candidates if candidate.get("error")],
-            }
-            if emit_output:
-                print(json.dumps(payload))
-            return payload
-        selected = max(
-            transformer_candidates,
-            key=lambda candidate: (
-                candidate["replay"]["block_recall"],
-                candidate["replay"]["pass_recall"],
-                candidate["dev"]["confusion"]["block_recall"],
-                candidate["dev"]["confusion"]["pass_recall"],
-            ),
-        )
 
-    save_tokenizer(selected, output_tokenizer)
-    raw_onnx_path = export_transformer_to_onnx(selected, output_model)
-    meta = {
-        "version": "2.0",
-        "labels": v2.LABELS,
-        "block_labels": sorted(v2.BLOCK_LABELS),
-        "threshold": selected["threshold"],
-        "model_name": selected["model_name"],
-        "max_length": args.max_length,
-        "backend": "onnx",
-    }
-    output_meta.write_text(json.dumps(meta, indent=2))
-
-    onnx_parity = compute_onnx_parity(selected, meta, output_tokenizer, raw_onnx_path)
-    latency = benchmark_latency(meta, output_tokenizer, output_model, [row["text"] for row in replay_cases])
-    raw_onnx_path.unlink(missing_ok=True)
-
-    report = {
-        "dataset": {
-            "rows": len(rows),
-            "train": len(splits.train),
-            "dev": len(splits.dev),
-            "test": len(splits.test),
-            "overlay_rows": len(overlay_rows),
-            "label_counts": {
-                label: sum(1 for row in rows if row["intent"] == label) for label in v2.LABELS
-            },
+def dataset_summary(rows: Sequence[dict], splits: SplitData, overlay_rows: Sequence[dict]):
+    return {
+        "rows": len(rows),
+        "train": len(splits.train),
+        "dev": len(splits.dev),
+        "test": len(splits.test),
+        "overlay_rows": len(overlay_rows),
+        "label_counts": {
+            label: sum(1 for row in rows if row["intent"] == label) for label in v2.LABELS
         },
-        "candidates": [],
+    }
+
+
+def candidate_report_entry(candidate: dict):
+    if "error" in candidate:
+        return candidate
+    return {
+        "name": candidate["name"],
+        "kind": candidate["kind"],
+        "model_name": candidate.get("model_name"),
+        "threshold": candidate["threshold"],
+        "dev_confusion": candidate["dev"]["confusion"],
+        "test_confusion": candidate["test"]["confusion"],
+        "regression_matched": candidate["regression"]["matched"],
+        "regression_total": candidate["regression"]["total"],
+        "replay_block_recall": candidate["replay"]["block_recall"],
+        "replay_pass_recall": candidate["replay"]["pass_recall"],
+    }
+
+
+def train_report(selected: dict, candidates: Sequence[dict], rows: Sequence[dict], splits: SplitData, overlay_rows: Sequence[dict], *, onnx_parity, latency, acceptance=None):
+    report = {
+        "dataset": dataset_summary(rows, splits, overlay_rows),
+        "candidates": [candidate_report_entry(candidate) for candidate in candidates],
         "selected_candidate": selected["name"],
-        "threshold_search": selected["threshold_search"],
         "regression_results": {
             "matched": selected["regression"]["matched"],
             "total": selected["regression"]["total"],
@@ -3523,40 +3432,49 @@ def command_train(argv: Sequence[str], *, emit_output: bool = True):
             "total": selected["replay"]["total"],
             "block_recall": selected["replay"]["block_recall"],
             "pass_recall": selected["replay"]["pass_recall"],
-            "targeted_family_accuracy": selected["replay"]["targeted_family_accuracy"],
+            "targeted_family_accuracy": selected["replay"].get("targeted_family_accuracy", {}),
             "rows": selected["replay"]["rows"],
         },
         "evaluation": {
             "test_confusion": selected["test"]["confusion"],
-            "per_intent": selected["test"]["per_intent"],
-            "false_negatives": selected["false_negatives"],
-            "false_positives": selected["false_positives"],
-            "low_margin_examples": selected["low_margin_examples"],
+            "per_intent": selected["test"].get("per_intent", {}),
+            "false_negatives": selected.get("false_negatives", []),
+            "false_positives": selected.get("false_positives", []),
+            "low_margin_examples": selected.get("low_margin_examples", []),
         },
         "onnx_parity_max_abs_delta": onnx_parity,
         "latency": latency,
     }
-    for candidate in candidates:
-        if "error" in candidate:
-            report["candidates"].append(candidate)
-            continue
-        report["candidates"].append(
-            {
-                "name": candidate["name"],
-                "kind": candidate["kind"],
-                "model_name": candidate.get("model_name"),
-                "threshold": candidate["threshold"],
-                "dev_confusion": candidate["dev"]["confusion"],
-                "test_confusion": candidate["test"]["confusion"],
-                "regression_matched": candidate["regression"]["matched"],
-                "regression_total": candidate["regression"]["total"],
-                "replay_block_recall": candidate["replay"]["block_recall"],
-                "replay_pass_recall": candidate["replay"]["pass_recall"],
-            }
-        )
+    if selected.get("threshold_search"):
+        report["threshold_search"] = selected["threshold_search"]
+    if acceptance is not None:
+        report["acceptance"] = acceptance
+    return report
 
-    native_arch = os.uname().machine
-    latency_target_env = native_arch == "arm64"
+
+def transformer_candidate_specs(skip_deberta: bool):
+    return [("minilm_l6", "sentence-transformers/all-MiniLM-L6-v2")] + (
+        [] if skip_deberta else [("deberta_v3_small", "microsoft/deberta-v3-small")]
+    )
+
+
+def select_transformer_candidate(selected: dict, viable_candidates: Sequence[dict]):
+    if selected["kind"] == "transformer":
+        return selected
+    transformer_candidates = [candidate for candidate in viable_candidates if candidate.get("kind") == "transformer"]
+    return None if not transformer_candidates else max(
+        transformer_candidates,
+        key=lambda candidate: (
+            candidate["replay"]["block_recall"],
+            candidate["replay"]["pass_recall"],
+            candidate["dev"]["confusion"]["block_recall"],
+            candidate["dev"]["confusion"]["pass_recall"],
+        ),
+    )
+
+
+def acceptance_checks(report: dict, onnx_parity: float, latency: dict):
+    latency_target_env = os.uname().machine == "arm64"
     acceptance = {
         "regression_full_match": report["regression_results"]["matched"] == report["regression_results"]["total"],
         "replay_block_recall": report["replay_results"]["block_recall"] >= 0.95,
@@ -3570,40 +3488,119 @@ def command_train(argv: Sequence[str], *, emit_output: bool = True):
         "describe_type_ok": report["evaluation"]["per_intent"]["describe_type"]["accuracy"] >= 0.95,
         "idiomatic_compare_ok": report["evaluation"]["per_intent"]["idiomatic_compare"]["accuracy"] >= 0.95,
         "onnx_parity_ok": onnx_parity <= 1e-3,
-        "latency_ok": True if not latency_target_env else (latency["p50_ms"] <= 15 and latency["p95_ms"] <= 40 and latency["batch20_ms"] <= 400),
+        "latency_ok": True
+        if not latency_target_env
+        else (latency["p50_ms"] <= 15 and latency["p95_ms"] <= 40 and latency["batch20_ms"] <= 400),
     }
     acceptance["latency_environment_matches_target"] = latency_target_env
     acceptance["meets_acceptance_bar"] = all(
         value for key, value in acceptance.items() if key != "latency_environment_matches_target"
     )
-    report["acceptance"] = acceptance
+    return acceptance
 
-    output_report.write_text(json.dumps(report, indent=2))
-    payload = {
-        "selected_candidate": selected["name"],
+
+def command_train(argv: Sequence[str], *, emit_output: bool = True):
+    ensure_training_dependencies()
+    args = parse_command_args("train", argv)
+    set_seed(args.seed)
+
+    output_model = Path(args.output_model)
+    output_tokenizer = Path(args.output_tokenizer)
+    output_meta = Path(args.output_meta)
+    output_report = Path(args.output_report)
+
+    output_model.parent.mkdir(parents=True, exist_ok=True)
+
+    rows, overlay_rows, splits, regression_cases, replay_cases = load_training_inputs(args)
+
+    candidates = [run_baseline_candidate(splits, regression_cases, replay_cases)]
+    for candidate_name, model_name in transformer_candidate_specs(args.skip_deberta):
+        append_candidate_result(
+            candidates,
+            lambda: train_transformer_candidate(
+                candidate_name=candidate_name,
+                model_name=model_name,
+                rows=splits,
+                args=args,
+                regression_cases=regression_cases,
+                replay_cases=replay_cases,
+            ),
+            name=candidate_name,
+            kind="transformer",
+            regression_total=len(regression_cases),
+            replay_total=len(replay_cases),
+        )
+
+    viable_candidates = [candidate for candidate in candidates if "error" not in candidate]
+    selected = choose_candidate(viable_candidates)
+    selected_transformer = select_transformer_candidate(selected, viable_candidates)
+    if selected_transformer is None:
+        failure_report = train_report(
+            selected,
+            candidates,
+            rows,
+            splits,
+            overlay_rows,
+            onnx_parity=None,
+            latency=None,
+            acceptance={"meets_acceptance_bar": False, "reason": "no_transformer_candidate"},
+        )
+        write_json(output_report, failure_report)
+        return emit_payload(
+            fail_payload(
+                "no_transformer_candidate",
+                status="failed",
+                selected_candidate=selected["name"],
+                report=str(output_report),
+                candidate_errors=[candidate["error"] for candidate in candidates if candidate.get("error")],
+            ),
+            emit_output,
+        )
+    selected = selected_transformer
+
+    save_tokenizer(selected, output_tokenizer)
+    raw_onnx_path = export_transformer_to_onnx(selected, output_model)
+    meta = {
+        "version": "2.0",
+        "labels": v2.LABELS,
+        "block_labels": sorted(v2.BLOCK_LABELS),
         "threshold": selected["threshold"],
-        "acceptance": acceptance,
-        "report": str(output_report),
+        "model_name": selected["model_name"],
+        "max_length": args.max_length,
+        "backend": "onnx",
     }
-    if emit_output:
-        print(json.dumps(payload))
+    write_json(output_meta, meta)
+
+    onnx_parity = compute_onnx_parity(selected, meta, output_tokenizer, raw_onnx_path)
+    latency = benchmark_latency(meta, output_tokenizer, output_model, [row["text"] for row in replay_cases])
+    raw_onnx_path.unlink(missing_ok=True)
+
+    report = train_report(
+        selected,
+        candidates,
+        rows,
+        splits,
+        overlay_rows,
+        onnx_parity=onnx_parity,
+        latency=latency,
+    )
+    report["acceptance"] = acceptance_checks(report, onnx_parity, latency)
+
+    write_json(output_report, report)
+    emit_payload(
+        {
+            "selected_candidate": selected["name"],
+            "threshold": selected["threshold"],
+            "acceptance": report["acceptance"],
+            "report": str(output_report),
+        },
+        emit_output,
+    )
     return report
 
 
-
-
-def parse_replay_args(argv: Sequence[str]):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--regression-cases", required=True)
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--tokenizer", required=True)
-    parser.add_argument("--meta", required=True)
-    parser.add_argument("--output", required=True)
-    return parser.parse_args(list(argv))
-
-
 def command_replay(argv: Sequence[str], *, emit_output: bool = True):
-    args = parse_replay_args(argv)
+    args = parse_command_args("replay", argv)
     cases = json.loads(Path(args.regression_cases).read_text())
     classifier = v2.OnnxIntentClassifier(
         model_path=args.model,
@@ -3636,9 +3633,8 @@ def command_replay(argv: Sequence[str], *, emit_output: bool = True):
         },
         "rows": rows,
     }
-    Path(args.output).write_text(json.dumps(output, indent=2))
-    if emit_output:
-        print(json.dumps(output["summary"]))
+    write_json(Path(args.output), output)
+    emit_payload(output["summary"], emit_output)
     return output
 
 

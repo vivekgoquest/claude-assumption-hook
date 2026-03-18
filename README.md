@@ -2,20 +2,40 @@
 
 Assumption Guard is a Claude Code Stop hook that blocks unsupported claims before they are sent.
 
-It is intentionally strict. It stops:
+The point of this project is simple: Claude Code is useful, but it still tends to guess unless something forces it to verify. Assumption Guard sits at the end of a response, catches risky language, and makes Claude go back to the repo, logs, tests, or commands before the answer is allowed through.
+
+## What It Blocks
+
+Assumption Guard is intentionally strict. It blocks clauses like:
 
 - unverified factual claims
 - unsupported recommendations
 - unsupported capability promises
-- unchecked “I haven't verified this yet” language
+- unchecked “I have not verified this yet” language
 
-It allows safe lanes such as:
+Examples:
+
+- `I think the timeout is 30 seconds`
+- `This should probably be refactored`
+- `I can identify the new records and remove them`
+- `I haven't checked the config yet`
+
+## What It Allows
+
+It keeps a few safe lanes open so Claude can still work naturally:
 
 - verification narration: `Let me verify whether...`
 - quoted or meta discussion about the detector
 - type and shape analysis
 - conditional reasoning
 - grounded limitations that say what was checked and what is still missing
+
+Examples:
+
+- `Let me verify whether that endpoint exists`
+- `The return value could be None or a string`
+- `If the flag is enabled, the middleware would return 401`
+- `I confirmed DELETE /videos/bulk exists, but without saved ids I can't remove only the new rows`
 
 ## How It Works
 
@@ -36,53 +56,7 @@ The hook contract stays simple:
 
 If ONNX runtime dependencies or model assets are missing, the hook fails open into regex-only mode and logs the fallback reason.
 
-## Project Layout
-
-This repo is intentionally small.
-
-```text
-hook/
-└── assumption-guard/
-    ├── assumption-guard.py
-    ├── settings-snippet.json
-    ├── assumption-guard-v2.onnx
-    ├── assumption-guard-v2-tokenizer.json
-    ├── assumption-guard-v2-meta.json
-    ├── baseline/
-    │   ├── assumption-guard-training-labeled.jsonl
-    │   ├── assumption-guard-regression-cases.json
-    │   ├── assumption-guard-replay-cases.json
-    │   └── assumption-guard-v2-report.json
-
-docs/
-├── architecture.md
-└── training.md
-
-tests/
-└── test_assumption_guard.py
-```
-
-At runtime the installed hook creates a local `state/` folder inside that same package:
-
-```text
-~/.claude/hooks/assumption-guard/state/
-├── assumption-guard.log.jsonl
-├── learning-queue.jsonl
-├── queue/
-├── reviewed-claude.jsonl
-├── current-model-report.json
-└── candidates/
-
-```
-
-The important idea is:
-
-- `baseline/` is packaged seed data and the committed report
-- `state/` is mutable local runtime state and is not committed
-
-Everything specific to this hook lives under one folder.
-
-## Install
+## Quick Start
 
 Requirements:
 
@@ -90,7 +64,7 @@ Requirements:
 - Python 3.8+
 - optional for ONNX mode: `onnxruntime`, `tokenizers`
 
-Install optional runtime deps:
+Install the optional runtime dependencies:
 
 ```bash
 pip install onnxruntime tokenizers
@@ -104,7 +78,7 @@ rm -rf ~/.claude/hooks/assumption-guard
 cp -R hook/assumption-guard ~/.claude/hooks/
 ```
 
-Point Claude Code at the packaged script:
+Point Claude Code at the packaged script in `~/.claude/settings.json`:
 
 ```json
 {
@@ -124,10 +98,50 @@ Point Claude Code at the packaged script:
 }
 ```
 
-The packaged hook keeps:
+Then start a new Claude Code session.
 
-- assets in `~/.claude/hooks/assumption-guard/`
-- mutable runtime state in `~/.claude/hooks/assumption-guard/state/`
+## Repo Layout
+
+This repo is intentionally small:
+
+```text
+hook/
+└── assumption-guard/
+    ├── assumption-guard.py
+    ├── settings-snippet.json
+    ├── assumption-guard-v2.onnx
+    ├── assumption-guard-v2-tokenizer.json
+    ├── assumption-guard-v2-meta.json
+    └── baseline/
+        ├── assumption-guard-training-labeled.jsonl
+        ├── assumption-guard-regression-cases.json
+        ├── assumption-guard-replay-cases.json
+        └── assumption-guard-v2-report.json
+
+docs/
+├── architecture.md
+└── training.md
+
+tests/
+└── test_assumption_guard.py
+```
+
+At runtime the installed hook creates a local `state/` folder inside that same package:
+
+```text
+~/.claude/hooks/assumption-guard/state/
+├── assumption-guard.log.jsonl
+├── learning-queue.jsonl
+├── queue/
+├── reviewed-claude.jsonl
+├── current-model-report.json
+└── candidates/
+```
+
+The important split is:
+
+- `baseline/` is packaged seed data and the committed report
+- `state/` is mutable local runtime state and is not committed
 
 ## Runtime State
 
@@ -137,7 +151,7 @@ By default the hook writes:
 - learning queue: `~/.claude/hooks/assumption-guard/state/learning-queue.jsonl`
 - current model report: `~/.claude/hooks/assumption-guard/state/current-model-report.json`
 
-Important env vars:
+Useful env vars:
 
 - `ASSUMPTION_GUARD_STATE_DIR`
 - `ASSUMPTION_GUARD_LOG_PATH`
@@ -147,7 +161,7 @@ Important env vars:
 - `ASSUMPTION_GUARD_TRIGGER_MODE`
 - `ASSUMPTION_GUARD_DISABLE`
 
-`ASSUMPTION_GUARD_TRIGGER_MODE` defaults to `post_append`, so the hook will check whether a learning cycle should be launched after new queue rows are written. Set it to `off` if you want enforcement without background trigger checks.
+`ASSUMPTION_GUARD_TRIGGER_MODE` defaults to `post_append`, so the hook checks after queue writes whether a learning cycle should be launched. Set it to `off` if you want enforcement without background trigger checks.
 
 ## Learning Loop
 
@@ -174,23 +188,20 @@ python3.11 hook/assumption-guard/assumption-guard.py replay \
 
 ## Current Model
 
-The current packaged model is a clause-level ONNX classifier with 13 intent labels.
+The packaged model is a clause-level ONNX classifier with 13 intent labels.
 
-Selected model:
+Current packaged snapshot:
 
-- `sentence-transformers/all-MiniLM-L6-v2`
-
-Committed report snapshot:
-
+- selected model: `sentence-transformers/all-MiniLM-L6-v2`
 - dataset rows: `485`
 - threshold: `0.20`
 - regression: `62 / 62`
 - replay: `17 / 17`
 
-See:
+More detail:
 
-- [architecture.md](/Users/vivek/Goquest%20Media%20Dropbox/Vivek%20Lath/Tech%20and%20Code/temp/claude-assumption-hook/docs/architecture.md)
-- [training.md](/Users/vivek/Goquest%20Media%20Dropbox/Vivek%20Lath/Tech%20and%20Code/temp/claude-assumption-hook/docs/training.md)
+- [Architecture](docs/architecture.md)
+- [Training](docs/training.md)
 
 ## Verify
 

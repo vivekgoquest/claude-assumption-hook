@@ -5,10 +5,9 @@ Assumption Guard Hook for Claude Code.
 A Stop hook that detects unverified uncertainty in Claude's responses and
 blocks until Claude verifies the statement with its tools.
 
-Two-stage detection: regex pre-filter (fast) -> optional ML classifier
-(more precise). The classifier filters out false positives such as
-quotations, idioms, type analysis, conditionals, code content, and
-verified limitations that already explain what was checked.
+Default runtime: v2 clause-level detection with stdlib regex and hard rules
+in front of an optional ONNX multiclass classifier. Legacy sklearn support is
+still available behind ASSUMPTION_GUARD_BACKEND=v1_legacy.
 """
 
 import json
@@ -18,6 +17,11 @@ import re
 import sys
 from datetime import datetime, timezone
 
+HOOK_DIR = os.path.dirname(__file__)
+if HOOK_DIR not in sys.path:
+    sys.path.insert(0, HOOK_DIR)
+
+import assumption_guard_v2 as v2  # pylint: disable=wrong-import-position
 
 # ============================================================================
 # HEDGING / UNVERIFIED LANGUAGE PATTERNS — stdlib only, always available
@@ -69,14 +73,29 @@ PATTERNS = [
     r"reviewed|read|looked at|inspected|tested|searched)\b",
     r"\b(cannot|can't|could not|couldn't)\s+(confirm|determine|verify)\b",
     r"\b(do not|don't)\s+know\b",
-    r"\b(requires?|needs?)\s+(running|checking|verifying|testing)\b",
+    r"\b(need|needs)\s+to\s+verify\b",
+    r"\b(requires?|needs?)\s+(running|checking|verifying|testing|benchmarking)\b",
+    r"\bto\s+know\s+for\s+sure\b",
 ]
 
 COMPILED_PATTERNS = [re.compile(pattern, re.IGNORECASE) for pattern in PATTERNS]
 
 CLAUDE_DIR = os.path.join(os.path.expanduser("~"), ".claude")
-MODEL_PATH = os.environ.get(
+BACKEND = os.environ.get("ASSUMPTION_GUARD_BACKEND", "v2")
+ONNX_MODEL_PATH = os.environ.get(
     "ASSUMPTION_GUARD_MODEL_PATH",
+    os.path.join(CLAUDE_DIR, "assumption-guard-v2.onnx"),
+)
+TOKENIZER_PATH = os.environ.get(
+    "ASSUMPTION_GUARD_TOKENIZER_PATH",
+    os.path.join(CLAUDE_DIR, "assumption-guard-v2-tokenizer.json"),
+)
+META_PATH = os.environ.get(
+    "ASSUMPTION_GUARD_META_PATH",
+    os.path.join(CLAUDE_DIR, "assumption-guard-v2-meta.json"),
+)
+LEGACY_MODEL_PATH = os.environ.get(
+    "ASSUMPTION_GUARD_LEGACY_MODEL_PATH",
     os.path.join(CLAUDE_DIR, "assumption-guard-model.pkl"),
 )
 LOG_PATH = os.environ.get(
@@ -134,6 +153,18 @@ def build_pipeline():
     return _MODEL_MODULE.build_pipeline()
 
 
+def build_candidate_pipelines(model_names=None):
+    """Create fresh candidate pipelines for offline evaluation."""
+    initialize_ml(raise_on_error=True)
+    return _MODEL_MODULE.build_candidate_pipelines(model_names=model_names)
+
+
+def model_descriptions():
+    """Return human-readable descriptions for supported offline model variants."""
+    initialize_ml(raise_on_error=True)
+    return _MODEL_MODULE.model_descriptions()
+
+
 def model_status(ml_available, fallback_reason=None, error_stage=None, error_detail=None):
     return {
         "ml_available": ml_available,
@@ -161,17 +192,17 @@ def get_model():
         )
         return None, dict(_MODEL_STATUS)
 
-    if not os.path.exists(MODEL_PATH):
+    if not os.path.exists(LEGACY_MODEL_PATH):
         _MODEL_STATUS = model_status(
             False,
             fallback_reason="model_missing",
             error_stage="model_load",
-            error_detail=f"missing model at {MODEL_PATH}",
+            error_detail=f"missing model at {LEGACY_MODEL_PATH}",
         )
         return None, dict(_MODEL_STATUS)
 
     try:
-        with open(MODEL_PATH, "rb") as file_obj:
+        with open(LEGACY_MODEL_PATH, "rb") as file_obj:
             _MODEL = pickle.load(file_obj)
     except Exception as exc:  # pragma: no cover - exercised in subprocess tests
         _MODEL_STATUS = model_status(
@@ -184,6 +215,98 @@ def get_model():
 
     _MODEL_STATUS = model_status(True)
     return _MODEL, dict(_MODEL_STATUS)
+
+
+# ============================================================================
+# OPTIONAL ONNX RUNTIME — loaded lazily so regex-only mode always works
+# ============================================================================
+
+_V2_CLASSIFIER = None
+_V2_STATUS = None
+_V2_LOAD_ATTEMPTED = False
+
+
+def get_v2_classifier():
+    """Load the ONNX classifier once and record explicit fallback reasons."""
+    global _V2_CLASSIFIER, _V2_STATUS, _V2_LOAD_ATTEMPTED
+
+    if _V2_LOAD_ATTEMPTED:
+        return _V2_CLASSIFIER, dict(_V2_STATUS)
+
+    _V2_LOAD_ATTEMPTED = True
+
+    try:
+        classifier = v2.OnnxIntentClassifier(
+            model_path=ONNX_MODEL_PATH,
+            tokenizer_path=TOKENIZER_PATH,
+            meta_path=META_PATH,
+        )
+        classifier.load()
+    except FileNotFoundError as exc:
+        detail = str(exc)
+        if detail.startswith("meta_missing:"):
+            _V2_STATUS = model_status(
+                False,
+                fallback_reason="meta_missing",
+                error_stage="meta_load",
+                error_detail=detail,
+            )
+        elif detail.startswith("tokenizer_missing:"):
+            _V2_STATUS = model_status(
+                False,
+                fallback_reason="tokenizer_missing",
+                error_stage="tokenizer_load",
+                error_detail=detail,
+            )
+        else:
+            _V2_STATUS = model_status(
+                False,
+                fallback_reason="model_missing",
+                error_stage="model_load",
+                error_detail=detail,
+            )
+        return None, dict(_V2_STATUS)
+    except RuntimeError as exc:
+        detail = str(exc)
+        if detail.startswith("ml_import_error:"):
+            _V2_STATUS = model_status(
+                False,
+                fallback_reason="ml_import_error",
+                error_stage="ml_import",
+                error_detail=detail,
+            )
+        else:
+            _V2_STATUS = model_status(
+                False,
+                fallback_reason="asset_load_error",
+                error_stage="model_load",
+                error_detail=detail,
+            )
+        return None, dict(_V2_STATUS)
+    except json.JSONDecodeError as exc:
+        _V2_STATUS = model_status(
+            False,
+            fallback_reason="asset_load_error",
+            error_stage="meta_load",
+            error_detail=f"{type(exc).__name__}: {exc}",
+        )
+        return None, dict(_V2_STATUS)
+    except Exception as exc:  # pragma: no cover - exercised in subprocess tests
+        error_stage = "model_load"
+        detail = f"{type(exc).__name__}: {exc}"
+        if "Tokenizer" in detail or "tokenizer" in detail:
+            error_stage = "tokenizer_load"
+        _V2_STATUS = model_status(
+            False,
+            fallback_reason="model_load_error",
+            error_stage=error_stage,
+            error_detail=detail,
+        )
+        return None, dict(_V2_STATUS)
+
+    _V2_CLASSIFIER = classifier
+    _V2_STATUS = model_status(True)
+    return _V2_CLASSIFIER, dict(_V2_STATUS)
 
 
 # ============================================================================
@@ -274,7 +397,7 @@ def scan_for_hedging(text):
 
 
 def filter_with_model(flagged_lines):
-    """Filter false positives with the optional ML classifier."""
+    """Filter false positives with the legacy sklearn classifier."""
     model, status = get_model()
     if model is None:
         return flagged_lines, status
@@ -296,7 +419,7 @@ def filter_with_model(flagged_lines):
     return genuine, status
 
 
-def format_reason(flagged_lines):
+def format_reason_legacy(flagged_lines):
     """Format the block reason with flagged lines and next-step guidance."""
     parts = ["Your response contains unverified uncertainty:\n"]
     for index, (line, words) in enumerate(flagged_lines.items(), start=1):
@@ -312,6 +435,41 @@ def format_reason(flagged_lines):
         "Do NOT simply rephrase — verify or justify."
     )
     return "\n".join(parts)
+
+
+def format_reason_v2(decisions):
+    """Format the v2 block reason with clauses, intents, and model scores."""
+    parts = ["Your response contains unchecked or unsupported claims:\n"]
+    for index, decision in enumerate(decisions, start=1):
+        truncated = decision.clause[:200] + "..." if len(decision.clause) > 200 else decision.clause
+        parts.append(f'  {index}. "{truncated}"')
+        parts.append(f"     Intent: {decision.intent}")
+        parts.append(f"     Source: {decision.source}")
+        if decision.p_block is not None:
+            parts.append(f"     p_block: {decision.p_block:.3f}")
+        if decision.matched_terms:
+            parts.append(f"     Matched: {', '.join(decision.matched_terms)}")
+        parts.append("")
+    parts.append(
+        "Verify each flagged clause with concrete evidence from the repo, logs,\n"
+        "tests, or commands. Keep only conclusions or recommendations that you\n"
+        "can support. If the evidence is insufficient, say exactly what you\n"
+        "checked and what remains unknown."
+    )
+    return "\n".join(parts)
+
+
+def evaluate_v2_text(full_text):
+    classifier, status = get_v2_classifier()
+    decisions = v2.evaluate_text(full_text, classifier if status["ml_available"] else None)
+    return decisions, status
+
+
+def evaluate_v1_text(full_text):
+    regex_flags = scan_for_hedging(full_text)
+    if not regex_flags:
+        return {}, model_status(True)
+    return filter_with_model(regex_flags)
 
 
 def log_event(event):
@@ -349,9 +507,11 @@ def main():
             sys.exit(0)
 
         full_text = "\n".join(assistant_texts)
-        regex_flags = scan_for_hedging(full_text)
-
-        if not regex_flags:
+        backend = BACKEND
+        if backend == "v1_legacy":
+            confirmed_flags, status = evaluate_v1_text(full_text)
+            stage = "model" if status["ml_available"] else "regex_only"
+            flag_count = len(confirmed_flags)
             log_event(
                 {
                     "session": session_id,
@@ -359,19 +519,35 @@ def main():
                     "retry": stop_hook_active,
                     "text_blocks": len(assistant_texts),
                     "text_chars": len(full_text),
-                    "result": "pass",
-                    "stage": "regex",
-                    "ml_available": None,
-                    "fallback_reason": None,
-                    "error_stage": None,
-                    "flag_count": 0,
-                    "flags": [],
+                    "result": "block" if confirmed_flags else "pass",
+                    "stage": stage,
+                    "backend": "legacy" if status["ml_available"] else "regex",
+                    "ml_available": status["ml_available"],
+                    "fallback_reason": status["fallback_reason"],
+                    "error_stage": status["error_stage"],
+                    "error_detail": status["error_detail"],
+                    "flag_count": flag_count,
+                    "flags": [
+                        {"line": line[:200], "words": sorted(words)}
+                        for line, words in confirmed_flags.items()
+                    ],
+                    "predicted_intent": None,
+                    "p_block": None,
+                    "threshold": None,
                 }
             )
+            if not confirmed_flags:
+                sys.exit(0)
+            print(json.dumps({"decision": "block", "reason": format_reason_legacy(confirmed_flags)}))
             sys.exit(0)
 
-        confirmed_flags, status = filter_with_model(regex_flags)
-        stage = "model" if status["ml_available"] else "regex_only"
+        decisions, status = evaluate_v2_text(full_text)
+        backend_name = "onnx" if status["ml_available"] else "regex"
+        stage = "onnx" if status["ml_available"] else "regex_only"
+        threshold = None
+        classifier = _V2_CLASSIFIER
+        if classifier is not None and classifier._meta is not None:  # pylint: disable=protected-access
+            threshold = classifier.meta.get("threshold")
 
         log_event(
             {
@@ -380,32 +556,34 @@ def main():
                 "retry": stop_hook_active,
                 "text_blocks": len(assistant_texts),
                 "text_chars": len(full_text),
-                "result": "block" if confirmed_flags else "pass",
+                "result": "block" if decisions else "pass",
                 "stage": stage,
+                "backend": backend_name,
                 "ml_available": status["ml_available"],
                 "fallback_reason": status["fallback_reason"],
                 "error_stage": status["error_stage"],
                 "error_detail": status["error_detail"],
-                "regex_flags": len(regex_flags),
-                "model_flags": len(confirmed_flags),
-                "filtered_out": len(regex_flags) - len(confirmed_flags),
-                "flag_count": len(confirmed_flags),
+                "flag_count": len(decisions),
                 "flags": [
-                    {"line": line[:200], "words": sorted(words)}
-                    for line, words in confirmed_flags.items()
+                    {
+                        "clause": decision.clause[:200],
+                        "intent": decision.intent,
+                        "source": decision.source,
+                        "p_block": decision.p_block,
+                        "matched_terms": decision.matched_terms or [],
+                    }
+                    for decision in decisions
                 ],
-                "filtered": [
-                    {"line": line[:200], "words": sorted(words)}
-                    for line, words in regex_flags.items()
-                    if line not in confirmed_flags
-                ],
+                "predicted_intent": [decision.intent for decision in decisions],
+                "p_block": [decision.p_block for decision in decisions if decision.p_block is not None],
+                "threshold": threshold,
             }
         )
 
-        if not confirmed_flags:
+        if not decisions:
             sys.exit(0)
 
-        print(json.dumps({"decision": "block", "reason": format_reason(confirmed_flags)}))
+        print(json.dumps({"decision": "block", "reason": format_reason_v2(decisions)}))
         sys.exit(0)
 
     except Exception as exc:  # pragma: no cover - exercised in subprocess tests

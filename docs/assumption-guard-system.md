@@ -2,170 +2,202 @@
 
 ## Purpose
 
-Assumption Guard is a Claude Code Stop hook that blocks responses containing unverified uncertainty. In v1.1, the policy is deliberately strict:
+Assumption Guard is a Claude Code Stop hook that blocks uncertain assistant clauses until Claude verifies them with tools or rewrites them as evidence-backed conclusions.
 
-- unverified factual guesses block
-- speculative recommendations block
-- explicit “I have not checked / cannot confirm yet” limitations block
+The v2 policy treats these as BLOCK:
 
-The only uncertain statements that should pass are ones that already describe a concrete verification attempt and explain why the available evidence is still insufficient.
+- `assert_unverified`
+- `recommend_unverified`
+- `unchecked_limitation`
+
+It treats these as PASS:
+
+- `reference_language`
+- `verified_limitation`
+- `describe_type`
+- `reason_conditionally`
+- `code_content`
+- `idiomatic_compare`
+- `recommend_supported`
 
 ## Execution Flow
 
 1. Claude finishes a turn.
-2. Claude Code invokes `assumption-guard.py` as a Stop hook.
-3. The hook reads the transcript JSONL and extracts assistant text from the current turn only.
-4. Stage 1 regex scans for uncertain or unchecked language.
-5. If regex finds matches, Stage 2 optionally loads the sklearn model and filters out false positives.
-6. If confirmed flags remain, the hook prints:
+2. Claude Code invokes `hook/assumption-guard.py`.
+3. The hook reads the transcript JSONL and extracts only the current assistant turn.
+4. The assistant text is split into clauses.
+5. Each clause goes through the v2 runtime pipeline:
+   - hard-pass suppressors
+   - hard-block rules
+   - stdlib regex prefilter
+   - optional ONNX multiclass classification
+6. If any clause remains blocked, the hook prints:
 
 ```json
 {"decision":"block","reason":"..."}
 ```
 
-7. Claude gets the block reason, re-checks with tools, and responds again.
+7. Claude gets the block reason and must verify, justify, or rewrite before the turn can finish.
 
-The turn boundary is the most recent user-authored text message, so old flagged text is not re-scanned after the hook injects feedback.
+The hook always exits `0`, even on fallback or internal errors, so it does not crash Claude Code.
+
+## Runtime Pipeline
+
+### 1. Clause Splitting
+
+The runtime unit is a clause, not a whole message.
+
+`hook/assumption_guard_v2.py` splits on:
+
+- sentence boundaries
+- `;`
+- em/en dashes
+- `, so ...`
+
+This keeps a recommendation or uncertainty phrase from hiding inside a longer paragraph.
+
+### 2. Hard-Pass Suppressors
+
+These skip ML entirely:
+
+- fenced code
+- inline-code-only/code-comment clauses
+- quoted examples
+- meta/report language such as `the hook flagged`, `regression case`, `classifier`, `label`, `metrics report`
+- type/shape clauses such as `The return value could be None or a string`
+- conditional reasoning such as `If the token expires, the middleware would return 401`
+- idiomatic comparisons such as `Use map rather than forEach here`
+- evidence-backed limitations and recommendations
+
+### 3. Hard-Block Rules
+
+These also skip ML and block immediately:
+
+- `I need to verify ...`
+- `I haven't checked ...`
+- `I can't confirm ...`
+- `off the top of my head`
+- `to know for sure`
+- `requires running / checking / benchmarking`
+
+### 4. Regex Prefilter
+
+Regex is stdlib-only and always available. It catches the candidate clauses that should be examined further. The current pattern groups cover:
+
+1. epistemic modals and approximators
+2. uncertainty intros
+3. speculative or unsupported recommendation language
+4. explicit unchecked/needs-verification language
+
+### 5. ONNX Classifier
+
+The ONNX model runs only on ambiguous clauses that survive the earlier filters.
+
+Runtime artifacts:
+
+- `model/assumption-guard-v2.onnx`
+- `model/assumption-guard-v2-tokenizer.json`
+- `model/assumption-guard-v2-meta.json`
+
+The classifier produces 10 intent probabilities. Runtime sums the three BLOCK-class probabilities into `p_block` and blocks when `p_block >= threshold`.
+
+The current metadata threshold is `0.20`.
 
 ## Runtime Modes
 
+### `onnx`
+
+- v2 assets loaded successfully
+- ambiguous clauses were classified by the ONNX model
+
 ### `regex`
 
-- No regex matches.
-- Fast pass.
-- No ML load attempt needed.
+- no ONNX model was used
+- only regex/hard-rule detection was active
 
-### `model`
+### `legacy`
 
-- Regex found matches.
-- ML dependencies and the trained pickle loaded successfully.
-- Model filtered the flagged lines.
-
-### `regex_only`
-
-- Regex found matches.
-- ML could not be used.
-- Hook falls back to regex-only blocking and logs why.
-
-Fallback reasons:
-
-- `ml_import_error`
-- `model_missing`
-- `pickle_load_error`
-- `predict_error`
+- the hook was forced into `ASSUMPTION_GUARD_BACKEND=v1_legacy`
+- sklearn pickle runtime was used
 
 ### `hook_error`
 
-- Unexpected runtime failure inside the hook.
-- Still exits `0` to avoid breaking Claude Code.
+- unexpected runtime failure inside the hook
+- hook still exits `0`
 
-## Detection Policy
+## Fail-Open Behavior
 
-### BLOCK
+The hook stays operational even when the ML runtime is unavailable.
 
-- `I think the timeout is 30 seconds`
-- `Maybe rename this helper to be clearer`
-- `This could be simplified by extracting a helper`
-- `We should probably add a unit test here`
-- `I'm not sure because I have not checked the config yet`
+Fallback reasons currently emitted in logs:
 
-### PASS
+- `ml_import_error`
+- `meta_missing`
+- `tokenizer_missing`
+- `model_missing`
+- `asset_load_error`
+- `model_load_error`
+- `predict_error`
 
-- `The hook flagged "probably" in the response`
-- `The return value could be None or a string`
-- `When the cache is cold, this may take longer`
-- `Use map rather than forEach here`
-- `I checked package.json and requirements.txt and cannot confirm the config value from this repo.`
-
-## Regex Layer
-
-The hook currently uses **27 compiled regex patterns** across these categories:
-
-1. Epistemic modals
-2. Shields
-3. Assumption markers
-4. Disclaimers
-5. Attribution hedges
-6. Conditional hedges
-7. Approximators
-8. AI-specific patterns
-9. Explicitly unchecked / not-yet-verified language
-
-Regex is stdlib-only and always available.
-
-## ML Layer
-
-The optional ML layer lives in `hook/assumption_guard_model.py`.
-
-Architecture:
-
-- TF-IDF vectorizer: 1-3 grams, 5000 features
-- Intent features: 14 structural signals
-- Classifier: `LogisticRegression(max_iter=1000, class_weight="balanced", C=1.0)`
-
-The current intent features include:
-
-1. Markdown table row
-2. Code comment
-3. Trigger only inside backticks
-4. Meta words present
-5. Type keywords present
-6. Starts with a conditional
-7. Trigger appears inside quotes
-8. Hedge density
-9. Line length
-10. First-person epistemic start
-11. Improvement / review words
-12. Verification evidence present
-13. Unchecked limitation language present
-14. Starts with uncertainty admission
+In those cases, Assumption Guard falls back to regex-only decisions and records the exact reason.
 
 ## Logging
 
-Every invocation writes a JSON object to `~/.claude/assumption-guard.log.jsonl`.
+Each invocation appends one JSON line to `~/.claude/assumption-guard.log.jsonl`.
 
 Important fields:
 
 - `result`
 - `stage`
+- `backend`
 - `ml_available`
 - `fallback_reason`
 - `error_stage`
 - `error_detail`
-- `regex_flags`
-- `model_flags`
-- `filtered_out`
+- `predicted_intent`
+- `p_block`
+- `threshold`
 - `flags`
 - `filtered`
 
-Example regex-only fallback:
+Example fallback record:
 
 ```json
 {
   "result": "block",
   "stage": "regex_only",
+  "backend": "regex",
   "ml_available": false,
-  "fallback_reason": "pickle_load_error",
-  "error_stage": "model_load"
+  "fallback_reason": "ml_import_error",
+  "error_stage": "ml_import"
 }
 ```
 
 ## Files
 
-Runtime files:
+Runtime:
 
 - `hook/assumption-guard.py`
-- `hook/assumption_guard_model.py`
+- `hook/assumption_guard_v2.py`
 - `hook/settings-snippet.json`
 
-Training and verification files:
+Legacy compatibility:
+
+- `hook/assumption_guard_model.py`
+- `model/assumption-guard-model.pkl`
+
+Training and evaluation:
 
 - `training/assumption-guard-training-labeled.jsonl`
 - `training/assumption-guard-regression-cases.json`
-- `training/train_assumption_guard.py`
-- `tests/test_assumption_guard.py`
+- `training/assumption-guard-replay-cases.json`
+- `training/mine_transcripts_v2.py`
+- `training/replay_eval_v2.py`
+- `training/train_v2.py`
 
-Generated artifacts:
+Generated v2 artifacts:
 
-- `model/assumption-guard-model.pkl`
-- `model/assumption-guard-metrics.json`
+- `model/assumption-guard-v2.onnx`
+- `model/assumption-guard-v2-tokenizer.json`
+- `model/assumption-guard-v2-meta.json`
+- `model/assumption-guard-v2-report.json`

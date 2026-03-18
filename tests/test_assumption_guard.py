@@ -1,5 +1,7 @@
+import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -9,18 +11,40 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HOOK_PATH = REPO_ROOT / "hook" / "assumption-guard.py"
-TRAINING_SCRIPT = REPO_ROOT / "training" / "train_assumption_guard.py"
-MODEL_PATH = REPO_ROOT / "model" / "assumption-guard-model.pkl"
-METRICS_PATH = REPO_ROOT / "model" / "assumption-guard-metrics.json"
+RUNTIME_MODULE_PATH = REPO_ROOT / "hook" / "assumption_guard_v2.py"
+TRAINING_SCRIPT = REPO_ROOT / "training" / "train_v2.py"
+REPLAY_SCRIPT = REPO_ROOT / "training" / "replay_eval_v2.py"
+MINING_SCRIPT = REPO_ROOT / "training" / "mine_transcripts_v2.py"
+MODEL_PATH = REPO_ROOT / "model" / "assumption-guard-v2.onnx"
+TOKENIZER_PATH = REPO_ROOT / "model" / "assumption-guard-v2-tokenizer.json"
+META_PATH = REPO_ROOT / "model" / "assumption-guard-v2-meta.json"
+REPORT_PATH = REPO_ROOT / "model" / "assumption-guard-v2-report.json"
 REGRESSION_CASES_PATH = REPO_ROOT / "training" / "assumption-guard-regression-cases.json"
 LABELED_DATA_PATH = REPO_ROOT / "training" / "assumption-guard-training-labeled.jsonl"
+TRAINING_PYTHON = os.environ.get("ASSUMPTION_GUARD_TRAIN_PYTHON") or shutil.which("python3.11") or sys.executable
+
+
+def load_runtime_module():
+    spec = importlib.util.spec_from_file_location("assumption_guard_v2", RUNTIME_MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def regression_cases():
     return json.loads(REGRESSION_CASES_PATH.read_text())
 
 
-def run_hook(assistant_text, *, model_path=MODEL_PATH, import_blocker=False):
+def run_hook(
+    assistant_text,
+    *,
+    backend="v2",
+    model_path=MODEL_PATH,
+    tokenizer_path=TOKENIZER_PATH,
+    meta_path=META_PATH,
+    import_blocker=False,
+):
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         transcript_path = tmp / "transcript.jsonl"
@@ -47,16 +71,18 @@ def run_hook(assistant_text, *, model_path=MODEL_PATH, import_blocker=False):
             "stop_hook_active": False,
         }
         env = os.environ.copy()
+        env["ASSUMPTION_GUARD_BACKEND"] = backend
         env["ASSUMPTION_GUARD_MODEL_PATH"] = str(model_path)
+        env["ASSUMPTION_GUARD_TOKENIZER_PATH"] = str(tokenizer_path)
+        env["ASSUMPTION_GUARD_META_PATH"] = str(meta_path)
         env["ASSUMPTION_GUARD_LOG_PATH"] = str(log_path)
         if import_blocker:
             blocker = f"""
 import builtins
 import runpy
-import sys
 
 real_import = builtins.__import__
-blocked = {{"numpy", "scipy", "sklearn"}}
+blocked = {{"onnxruntime", "tokenizers"}}
 
 def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
     if name.split(".")[0] in blocked:
@@ -85,9 +111,28 @@ runpy.run_path({str(HOOK_PATH)!r}, run_name="__main__")
         return result, log_entries
 
 
-class AssumptionGuardHookTests(unittest.TestCase):
-    def test_regression_cases_follow_strict_policy(self):
-        for case in regression_cases():
+class AssumptionGuardRuntimeTests(unittest.TestCase):
+    def test_clause_splitter_breaks_conservative_subclauses(self):
+        runtime = load_runtime_module()
+        clauses = runtime.split_text_to_clauses(
+            "Maybe rename this helper to be clearer; I checked the repo, so renaming it should be safe. "
+            "The return value could be None or a string — if the callback throws, the promise may reject."
+        )
+        self.assertEqual(
+            clauses,
+            [
+                "Maybe rename this helper to be clearer",
+                "I checked the repo",
+                "renaming it should be safe.",
+                "The return value could be None or a string",
+                "if the callback throws, the promise may reject.",
+            ],
+        )
+
+    def test_regression_cases_follow_v2_policy(self):
+        cases = regression_cases()
+        self.assertGreaterEqual(len(cases), 40)
+        for case in cases:
             with self.subTest(text=case["text"]):
                 result, _ = run_hook(case["text"])
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -97,7 +142,15 @@ class AssumptionGuardHookTests(unittest.TestCase):
                 else:
                     self.assertEqual(result.stdout.strip(), "", result.stdout)
 
-    def test_missing_ml_dependencies_fall_back_to_regex_only(self):
+    def test_block_reason_includes_clause_and_predicted_intent(self):
+        result, _ = run_hook("Maybe rename this helper to be clearer")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["decision"], "block")
+        self.assertIn("Maybe rename this helper to be clearer", payload["reason"])
+        self.assertIn("recommend_unverified", payload["reason"])
+
+    def test_missing_onnx_dependencies_fall_back_to_regex_only(self):
         result, log_entries = run_hook(
             "I think the timeout is 30 seconds",
             import_blocker=True,
@@ -107,46 +160,60 @@ class AssumptionGuardHookTests(unittest.TestCase):
         self.assertTrue(log_entries, "expected a log entry")
         latest = log_entries[-1]
         self.assertEqual(latest["stage"], "regex_only")
+        self.assertEqual(latest["backend"], "regex")
         self.assertFalse(latest["ml_available"])
         self.assertEqual(latest["fallback_reason"], "ml_import_error")
         self.assertEqual(latest["error_stage"], "ml_import")
 
-    def test_corrupt_model_falls_back_to_regex_only(self):
+    def test_corrupt_v2_assets_fall_back_to_regex_only(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            corrupt_model = Path(tmpdir) / "broken-model.pkl"
-            corrupt_model.write_text("not a pickle")
+            tmp = Path(tmpdir)
+            corrupt_model = tmp / "broken-model.onnx"
+            corrupt_tokenizer = tmp / "tokenizer.json"
+            corrupt_meta = tmp / "meta.json"
+            corrupt_model.write_text("not an onnx model")
+            corrupt_tokenizer.write_text("{\"version\":\"1.0\"}")
+            corrupt_meta.write_text("{\"threshold\":0.5,\"labels\":[\"assert_unverified\"]}")
             result, log_entries = run_hook(
                 "I think the timeout is 30 seconds",
                 model_path=corrupt_model,
+                tokenizer_path=corrupt_tokenizer,
+                meta_path=corrupt_meta,
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["decision"], "block")
         self.assertTrue(log_entries, "expected a log entry")
         latest = log_entries[-1]
         self.assertEqual(latest["stage"], "regex_only")
+        self.assertEqual(latest["backend"], "regex")
         self.assertFalse(latest["ml_available"])
-        self.assertEqual(latest["fallback_reason"], "pickle_load_error")
-        self.assertEqual(latest["error_stage"], "model_load")
+        self.assertIn(latest["fallback_reason"], {"asset_load_error", "model_load_error"})
+        self.assertIn(latest["error_stage"], {"model_load", "tokenizer_load", "meta_load"})
 
 
-class AssumptionGuardTrainingTests(unittest.TestCase):
-    def test_training_script_reproduces_metrics_and_cases(self):
+class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
+    def test_mining_and_training_entrypoints_exist(self):
+        self.assertTrue(MINING_SCRIPT.exists())
+        self.assertTrue(TRAINING_SCRIPT.exists())
+        self.assertTrue(REPLAY_SCRIPT.exists())
+
+    def test_replay_script_runs_against_committed_assets(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir)
-            output_model = tmp / "assumption-guard-model.pkl"
-            output_metrics = tmp / "assumption-guard-metrics.json"
+            output_path = Path(tmpdir) / "replay-report.json"
             result = subprocess.run(
                 [
-                    sys.executable,
-                    str(TRAINING_SCRIPT),
-                    "--training-data",
-                    str(LABELED_DATA_PATH),
+                    TRAINING_PYTHON,
+                    str(REPLAY_SCRIPT),
                     "--regression-cases",
                     str(REGRESSION_CASES_PATH),
-                    "--output-model",
-                    str(output_model),
-                    "--output-metrics",
-                    str(output_metrics),
+                    "--model",
+                    str(MODEL_PATH),
+                    "--tokenizer",
+                    str(TOKENIZER_PATH),
+                    "--meta",
+                    str(META_PATH),
+                    "--output",
+                    str(output_path),
                 ],
                 capture_output=True,
                 text=True,
@@ -154,26 +221,27 @@ class AssumptionGuardTrainingTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            metrics = json.loads(output_metrics.read_text())
-            committed_metrics = json.loads(METRICS_PATH.read_text())
-            self.assertEqual(metrics["dataset"]["rows"], committed_metrics["dataset"]["rows"])
-            self.assertEqual(metrics["dataset"]["label_counts"], committed_metrics["dataset"]["label_counts"])
-            self.assertAlmostEqual(
-                metrics["cross_validation"]["f1_macro_mean"],
-                committed_metrics["cross_validation"]["f1_macro_mean"],
-                places=6,
-            )
-            self.assertTrue(
-                all(case["matched"] for case in metrics["regression_cases"]),
-                metrics["regression_cases"],
-            )
+            replay = json.loads(output_path.read_text())
+            self.assertEqual(replay["summary"]["matched"], replay["summary"]["total"])
 
-            smoke_result, _ = run_hook(
-                "I think the timeout is 30 seconds",
-                model_path=output_model,
-            )
-            self.assertEqual(smoke_result.returncode, 0, smoke_result.stderr)
-            self.assertEqual(json.loads(smoke_result.stdout)["decision"], "block")
+    def test_committed_report_meets_acceptance_gates(self):
+        report = json.loads(REPORT_PATH.read_text())
+        self.assertIn("candidates", report)
+        self.assertIn("selected_candidate", report)
+        self.assertIn("replay_results", report)
+        self.assertIn("regression_results", report)
+        self.assertIn("threshold_search", report)
+        self.assertIn("latency", report)
+        self.assertTrue(report["acceptance"]["meets_acceptance_bar"], report["acceptance"])
+        self.assertGreaterEqual(report["replay_results"]["block_recall"], 0.95)
+        self.assertGreaterEqual(report["replay_results"]["pass_recall"], 0.95)
+        self.assertEqual(report["regression_results"]["matched"], report["regression_results"]["total"])
+
+    def test_v2_assets_exist(self):
+        self.assertTrue(MODEL_PATH.exists())
+        self.assertTrue(TOKENIZER_PATH.exists())
+        self.assertTrue(META_PATH.exists())
+        self.assertTrue(REPORT_PATH.exists())
 
 
 if __name__ == "__main__":

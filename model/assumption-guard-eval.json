@@ -1,0 +1,1994 @@
+{
+  "generated_at": "2026-03-18T01:46:38.186830+00:00",
+  "candidate_models": [
+    {
+      "name": "logreg",
+      "description": "TF-IDF (1-3 grams, 5000 features) + 32 intent features -> LogisticRegression",
+      "cross_validation": {
+        "folds": 5,
+        "f1_macro_mean": 0.959495,
+        "f1_macro_std": 0.015199
+      },
+      "threshold": {
+        "value": 0.5,
+        "decision": "kept_default_threshold_for_runtime_compatibility",
+        "best_candidate": {
+          "threshold": 0.55,
+          "block_recall": 0.949309,
+          "pass_recall": 0.982379,
+          "accuracy": 0.966216,
+          "score": 6.23702
+        },
+        "reviewed_candidates": [
+          {
+            "threshold": 0.35,
+            "block_recall": 0.967742,
+            "pass_recall": 0.889868,
+            "accuracy": 0.927928,
+            "score": 6.133698
+          },
+          {
+            "threshold": 0.4,
+            "block_recall": 0.963134,
+            "pass_recall": 0.920705,
+            "accuracy": 0.941441,
+            "score": 6.175035
+          },
+          {
+            "threshold": 0.45,
+            "block_recall": 0.958525,
+            "pass_recall": 0.938326,
+            "accuracy": 0.948198,
+            "score": 6.189787
+          },
+          {
+            "threshold": 0.5,
+            "block_recall": 0.953917,
+            "pass_recall": 0.964758,
+            "accuracy": 0.959459,
+            "score": 6.222264
+          },
+          {
+            "threshold": 0.55,
+            "block_recall": 0.949309,
+            "pass_recall": 0.982379,
+            "accuracy": 0.966216,
+            "score": 6.23702
+          },
+          {
+            "threshold": 0.6,
+            "block_recall": 0.926267,
+            "pass_recall": 0.986784,
+            "accuracy": 0.957207,
+            "score": 6.142451
+          },
+          {
+            "threshold": 0.65,
+            "block_recall": 0.907834,
+            "pass_recall": 0.995595,
+            "accuracy": 0.952703,
+            "score": 6.077431
+          }
+        ],
+        "default_threshold_metrics": {
+          "threshold": 0.5,
+          "block_recall": 0.953917,
+          "pass_recall": 0.964758,
+          "accuracy": 0.959459,
+          "score": 6.222264
+        }
+      },
+      "evaluation": {
+        "confusion": {
+          "tp": 207,
+          "tn": 219,
+          "fp": 8,
+          "fn": 10,
+          "block_recall": 0.953917,
+          "pass_recall": 0.964758,
+          "accuracy": 0.959459
+        },
+        "per_intent_accuracy": {
+          "assert_unverified": {
+            "correct": 106,
+            "total": 114,
+            "accuracy": 0.929825
+          },
+          "code_content": {
+            "correct": 20,
+            "total": 21,
+            "accuracy": 0.952381
+          },
+          "describe_type": {
+            "correct": 42,
+            "total": 43,
+            "accuracy": 0.976744
+          },
+          "idiomatic_compare": {
+            "correct": 26,
+            "total": 27,
+            "accuracy": 0.962963
+          },
+          "reason_conditionally": {
+            "correct": 31,
+            "total": 32,
+            "accuracy": 0.96875
+          },
+          "recommend_supported": {
+            "correct": 18,
+            "total": 18,
+            "accuracy": 1.0
+          },
+          "recommend_unverified": {
+            "correct": 57,
+            "total": 59,
+            "accuracy": 0.966102
+          },
+          "reference_language": {
+            "correct": 55,
+            "total": 59,
+            "accuracy": 0.932203
+          },
+          "unchecked_limitation": {
+            "correct": 44,
+            "total": 44,
+            "accuracy": 1.0
+          },
+          "verified_limitation": {
+            "correct": 27,
+            "total": 27,
+            "accuracy": 1.0
+          }
+        },
+        "low_margin_examples": [
+          {
+            "sentence": "1. \"I think the timeout is probably 30 seconds\"",
+            "intent": "reference_language",
+            "expected_block": false,
+            "predicted_block": true,
+            "block_probability": 0.506489,
+            "margin": 0.006489,
+            "matched": false
+          },
+          {
+            "sentence": "Flag 2: \"The most likely cause is a race condition\"",
+            "intent": "reference_language",
+            "expected_block": false,
+            "predicted_block": true,
+            "block_probability": 0.508654,
+            "margin": 0.008654,
+            "matched": false
+          },
+          {
+            "sentence": "The generic type could be any subclass of Base",
+            "intent": "describe_type",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.481755,
+            "margin": 0.018245,
+            "matched": true
+          },
+          {
+            "sentence": "The assumption guard blocks responses containing \"I assume\"",
+            "intent": "reference_language",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.480798,
+            "margin": 0.019202,
+            "matched": true
+          },
+          {
+            "sentence": "The event could fire multiple times during resize",
+            "intent": "describe_type",
+            "expected_block": false,
+            "predicted_block": true,
+            "block_probability": 0.519684,
+            "margin": 0.019684,
+            "matched": false
+          },
+          {
+            "sentence": "The event could fire multiple times during resize",
+            "intent": "reason_conditionally",
+            "expected_block": false,
+            "predicted_block": true,
+            "block_probability": 0.519684,
+            "margin": 0.019684,
+            "matched": false
+          },
+          {
+            "sentence": "# maybe rename after cleanup",
+            "intent": "code_content",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.478293,
+            "margin": 0.021707,
+            "matched": true
+          },
+          {
+            "sentence": "The helper could accept a callable or a concrete client instance",
+            "intent": "describe_type",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.477648,
+            "margin": 0.022352,
+            "matched": true
+          },
+          {
+            "sentence": "This seems like it should return early on invalid input",
+            "intent": "recommend_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.524713,
+            "margin": 0.024713,
+            "matched": true
+          },
+          {
+            "sentence": "The event could fire more than once during resize",
+            "intent": "reason_conditionally",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.469219,
+            "margin": 0.030781,
+            "matched": true
+          },
+          {
+            "sentence": "I'm fairly sure this is the only caller",
+            "intent": "assert_unverified",
+            "expected_block": true,
+            "predicted_block": false,
+            "block_probability": 0.464539,
+            "margin": 0.035461,
+            "matched": false
+          },
+          {
+            "sentence": "2. \"This is probably a timing issue\"",
+            "intent": "reference_language",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.453777,
+            "margin": 0.046223,
+            "matched": true
+          },
+          {
+            "sentence": "The config entry may be optional in test environments",
+            "intent": "describe_type",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.441012,
+            "margin": 0.058988,
+            "matched": true
+          },
+          {
+            "sentence": "The bug is likely related to the async handler",
+            "intent": "assert_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.561954,
+            "margin": 0.061954,
+            "matched": true
+          },
+          {
+            "sentence": "We should rename this method rather than keep the generic name.",
+            "intent": "recommend_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.570491,
+            "margin": 0.070491,
+            "matched": true
+          },
+          {
+            "sentence": "I'm reasonably sure the flag is deprecated",
+            "intent": "assert_unverified",
+            "expected_block": true,
+            "predicted_block": false,
+            "block_probability": 0.426561,
+            "margin": 0.073439,
+            "matched": false
+          },
+          {
+            "sentence": "TF-IDF sees \"I think\" in a normal sentence structure",
+            "intent": "reference_language",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.420556,
+            "margin": 0.079444,
+            "matched": true
+          },
+          {
+            "sentence": "| It seems like the cache | BLOCK | BLOCK | Yes |",
+            "intent": "reference_language",
+            "expected_block": false,
+            "predicted_block": true,
+            "block_probability": 0.585238,
+            "margin": 0.085238,
+            "matched": false
+          },
+          {
+            "sentence": "This seems like it should return early before parsing.",
+            "intent": "recommend_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.58604,
+            "margin": 0.08604,
+            "matched": true
+          },
+          {
+            "sentence": "We should refactor this rather than adding more patches",
+            "intent": "recommend_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.587387,
+            "margin": 0.087387,
+            "matched": true
+          }
+        ],
+        "misclassifications_by_intent": {
+          "assert_unverified": [
+            {
+              "sentence": "I'm fairly sure this is the only caller",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.464539,
+              "margin": 0.035461
+            },
+            {
+              "sentence": "I'm reasonably sure the flag is deprecated",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.426561,
+              "margin": 0.073439
+            },
+            {
+              "sentence": "If I recall correctly the limit is 1000",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.354246,
+              "margin": 0.145754
+            },
+            {
+              "sentence": "The response is probably being cached by the proxy",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.300134,
+              "margin": 0.199866
+            },
+            {
+              "sentence": "The field appears to be a number-only input.",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.269921,
+              "margin": 0.230079
+            },
+            {
+              "sentence": "Processing is relatively fast for this dataset",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.267652,
+              "margin": 0.232348
+            },
+            {
+              "sentence": "The issue is likely that the hook is swallowing the 401 and returning no data.",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.228178,
+              "margin": 0.271822
+            },
+            {
+              "sentence": "The crash might be triggered by concurrent access",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.200362,
+              "margin": 0.299638
+            }
+          ],
+          "code_content": [
+            {
+              "sentence": "`// TODO: probably refactor this`",
+              "expected_block": false,
+              "predicted_block": true,
+              "block_probability": 0.727618,
+              "margin": 0.227618
+            }
+          ],
+          "describe_type": [
+            {
+              "sentence": "The event could fire multiple times during resize",
+              "expected_block": false,
+              "predicted_block": true,
+              "block_probability": 0.519684,
+              "margin": 0.019684
+            }
+          ],
+          "idiomatic_compare": [
+            {
+              "sentence": "Cache the parsed config rather than reparsing it for each request",
+              "expected_block": false,
+              "predicted_block": true,
+              "block_probability": 0.642025,
+              "margin": 0.142025
+            }
+          ],
+          "reason_conditionally": [
+            {
+              "sentence": "The event could fire multiple times during resize",
+              "expected_block": false,
+              "predicted_block": true,
+              "block_probability": 0.519684,
+              "margin": 0.019684
+            }
+          ],
+          "recommend_unverified": [
+            {
+              "sentence": "Store this state in the database rather than in memory.",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.17588,
+              "margin": 0.32412
+            },
+            {
+              "sentence": "Store state in the database rather than in memory",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.174968,
+              "margin": 0.325032
+            }
+          ],
+          "reference_language": [
+            {
+              "sentence": "1. \"I think the timeout is probably 30 seconds\"",
+              "expected_block": false,
+              "predicted_block": true,
+              "block_probability": 0.506489,
+              "margin": 0.006489
+            },
+            {
+              "sentence": "Flag 2: \"The most likely cause is a race condition\"",
+              "expected_block": false,
+              "predicted_block": true,
+              "block_probability": 0.508654,
+              "margin": 0.008654
+            },
+            {
+              "sentence": "| It seems like the cache | BLOCK | BLOCK | Yes |",
+              "expected_block": false,
+              "predicted_block": true,
+              "block_probability": 0.585238,
+              "margin": 0.085238
+            },
+            {
+              "sentence": "The sentence \"I can't confirm this without checking\" should block",
+              "expected_block": false,
+              "predicted_block": true,
+              "block_probability": 0.643781,
+              "margin": 0.143781
+            }
+          ]
+        }
+      },
+      "regression_cases": [
+        {
+          "text": "I think the timeout is 30 seconds",
+          "group": "assert_unverified",
+          "reason": "first-person factual guess",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.990055
+        },
+        {
+          "text": "The app probably listens on port 3000",
+          "group": "assert_unverified",
+          "reason": "probabilistic factual claim",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.8681
+        },
+        {
+          "text": "As far as I can tell, this endpoint bypasses auth",
+          "group": "assert_unverified",
+          "reason": "unsupported observation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.976652
+        },
+        {
+          "text": "Roughly 20% of the requests hit the fallback path",
+          "group": "assert_unverified",
+          "reason": "approximate claim without evidence",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.921211
+        },
+        {
+          "text": "The risk is relatively low",
+          "group": "assert_unverified",
+          "reason": "subjective approximation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.903727
+        },
+        {
+          "text": "I think this migration already ran in production",
+          "group": "assert_unverified",
+          "reason": "unsupported deployment claim",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.970927
+        },
+        {
+          "text": "Maybe rename this helper to be clearer",
+          "group": "recommend_unverified",
+          "reason": "uncertain recommendation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.989747
+        },
+        {
+          "text": "This could be simplified by extracting a helper",
+          "group": "recommend_unverified",
+          "reason": "speculative improvement claim",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.925699
+        },
+        {
+          "text": "We should probably add a unit test here",
+          "group": "recommend_unverified",
+          "reason": "uncertain recommendation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.932466
+        },
+        {
+          "text": "I'm not sure because I have not checked the config yet",
+          "group": "recommend_unverified",
+          "reason": "explicitly unchecked claim",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.894388
+        },
+        {
+          "text": "Deploy to staging rather than directly to production",
+          "group": "recommend_unverified",
+          "reason": "unsupported context-specific recommendation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.774431
+        },
+        {
+          "text": "Consider using TypeScript rather than plain JavaScript",
+          "group": "recommend_unverified",
+          "reason": "unsupported technology recommendation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.753337
+        },
+        {
+          "text": "Store state in the database rather than in memory",
+          "group": "recommend_unverified",
+          "reason": "unsupported architecture recommendation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.609661
+        },
+        {
+          "text": "Probably worth adding integration coverage for this path",
+          "group": "recommend_unverified",
+          "reason": "hedged recommendation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.974604
+        },
+        {
+          "text": "I have not checked the external API documentation for this",
+          "group": "unchecked_limitation",
+          "reason": "unverified limitation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.922577
+        },
+        {
+          "text": "This requires running the test suite to confirm",
+          "group": "unchecked_limitation",
+          "reason": "needs verification",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.936518
+        },
+        {
+          "text": "Off the top of my head, I don't know whether this is enabled in prod",
+          "group": "unchecked_limitation",
+          "reason": "admitted uncertainty",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.974404
+        },
+        {
+          "text": "Without reading the migration, I can't confirm the default",
+          "group": "unchecked_limitation",
+          "reason": "unchecked limitation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.870383
+        },
+        {
+          "text": "I haven't checked whether this retry policy comes from the SDK",
+          "group": "unchecked_limitation",
+          "reason": "not yet verified",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.926893
+        },
+        {
+          "text": "This requires benchmarking to know for sure",
+          "group": "unchecked_limitation",
+          "reason": "needs external verification",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.834002
+        },
+        {
+          "text": "I checked package.json and requirements.txt and cannot confirm the config value from this repo.",
+          "group": "verified_limitation",
+          "reason": "verified limitation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.068722
+        },
+        {
+          "text": "I searched the codebase and cannot confirm the production timeout value.",
+          "group": "verified_limitation",
+          "reason": "checked repo before limiting claim",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.159105
+        },
+        {
+          "text": "I checked the Dockerfile and CI workflow and cannot confirm the deployed image tag from this repo.",
+          "group": "verified_limitation",
+          "reason": "evidence-backed limitation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.072719
+        },
+        {
+          "text": "I searched the release workflow and deployment scripts and cannot determine which environment variable wins in production.",
+          "group": "verified_limitation",
+          "reason": "verified limitation after inspection",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.006254
+        },
+        {
+          "text": "I inspected the API client and mock responses and cannot confirm the live payload without hitting the running service.",
+          "group": "verified_limitation",
+          "reason": "explicitly checked local evidence",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.003002
+        },
+        {
+          "text": "The return value could be None or a string",
+          "group": "describe_type",
+          "reason": "type description",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.040482
+        },
+        {
+          "text": "The callback may return either a cleanup function or nothing",
+          "group": "describe_type",
+          "reason": "type alternative",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.051508
+        },
+        {
+          "text": "The token could be bytes or a base64 string",
+          "group": "describe_type",
+          "reason": "shape description",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.041797
+        },
+        {
+          "text": "The field might be absent on older payloads",
+          "group": "describe_type",
+          "reason": "schema description",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.263355
+        },
+        {
+          "text": "The handler could receive either text or binary frames",
+          "group": "describe_type",
+          "reason": "type variant",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.025048
+        },
+        {
+          "text": "When the cache is cold, this may take longer",
+          "group": "reason_conditionally",
+          "reason": "conditional reasoning",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.359788
+        },
+        {
+          "text": "If the token expires, the middleware would return 401",
+          "group": "reason_conditionally",
+          "reason": "conditional behavior",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.022251
+        },
+        {
+          "text": "Without a default case, this switch could fall through unexpectedly",
+          "group": "reason_conditionally",
+          "reason": "conditional control flow",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.167075
+        },
+        {
+          "text": "If the env var is unset, the loader would fall back to the default path",
+          "group": "reason_conditionally",
+          "reason": "conditional default behavior",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.169382
+        },
+        {
+          "text": "With debug logging enabled, this path may allocate more strings",
+          "group": "reason_conditionally",
+          "reason": "conditional side effect",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.16271
+        },
+        {
+          "text": "The hook flagged \"probably\" in the response",
+          "group": "reference_language",
+          "reason": "meta discussion",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.004085
+        },
+        {
+          "text": "The phrase \"I haven't checked\" should trigger the hook",
+          "group": "reference_language",
+          "reason": "quoted trigger explanation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.082997
+        },
+        {
+          "text": "\"Maybe rename this helper\" belongs in recommend_unverified",
+          "group": "reference_language",
+          "reason": "taxonomy discussion",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.074187
+        },
+        {
+          "text": "The acceptance report includes per-intent accuracy for describe_type",
+          "group": "reference_language",
+          "reason": "report discussion",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.133386
+        },
+        {
+          "text": "The detector matched \"off the top of my head\" in the sample response",
+          "group": "reference_language",
+          "reason": "meta detection language",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.007284
+        },
+        {
+          "text": "The comment says `# might be null here`",
+          "group": "code_content",
+          "reason": "quoted code comment",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.039299
+        },
+        {
+          "text": "`// TODO: probably refactor this`",
+          "group": "code_content",
+          "reason": "literal code content",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.452115
+        },
+        {
+          "text": "In the example: `// probably remove after migration`",
+          "group": "code_content",
+          "reason": "inline code quote",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.020569
+        },
+        {
+          "text": "# maybe rename after cleanup",
+          "group": "code_content",
+          "reason": "comment text",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.336711
+        },
+        {
+          "text": "Use map rather than forEach here",
+          "group": "idiomatic_compare",
+          "reason": "idiomatic compare",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.027596
+        },
+        {
+          "text": "Return early rather than nesting multiple conditions",
+          "group": "idiomatic_compare",
+          "reason": "idiomatic control-flow advice",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.028722
+        },
+        {
+          "text": "Use a context manager rather than manual close calls",
+          "group": "idiomatic_compare",
+          "reason": "idiomatic resource handling advice",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.134642
+        },
+        {
+          "text": "Reuse the compiled regex rather than rebuilding it each call",
+          "group": "idiomatic_compare",
+          "reason": "localized implementation advice",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.016702
+        },
+        {
+          "text": "Prefer a named constant over the literal `3000`",
+          "group": "idiomatic_compare",
+          "reason": "idiomatic readability advice",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.011399
+        },
+        {
+          "text": "I searched the repo and this helper is only called once, so renaming it should be safe.",
+          "group": "recommend_supported",
+          "reason": "evidence-backed recommendation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.048938
+        },
+        {
+          "text": "I reviewed the tests and there is no coverage for the retry path, so adding a unit test would cover a real gap.",
+          "group": "recommend_supported",
+          "reason": "supported test recommendation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.041297
+        },
+        {
+          "text": "I inspected the config loader and env parsing is duplicated in two modules, so extracting a shared parser would reduce drift.",
+          "group": "recommend_supported",
+          "reason": "supported refactor recommendation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.072782
+        },
+        {
+          "text": "I checked the trace and this client is created on every request, so reusing it would remove repeated setup work.",
+          "group": "recommend_supported",
+          "reason": "supported performance recommendation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.039345
+        },
+        {
+          "text": "The dev server might be down.",
+          "group": "assert_unverified",
+          "reason": "live transcript factual guess",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.868242
+        },
+        {
+          "text": "This single component should probably be split.",
+          "group": "recommend_unverified",
+          "reason": "live transcript recommendation hedge",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.936017
+        },
+        {
+          "text": "I need to verify the LTV math.",
+          "group": "unchecked_limitation",
+          "reason": "live transcript unchecked limitation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.946559
+        }
+      ],
+      "regression_summary": {
+        "cases": 56,
+        "matched": 56
+      },
+      "acceptance": {
+        "criteria": {
+          "regression_cases_match": true,
+          "block_recall_target": 0.95,
+          "pass_recall_target": 0.85,
+          "review_intents": {
+            "reference_language": {
+              "correct": 55,
+              "total": 59,
+              "accuracy": 0.932203
+            },
+            "verified_limitation": {
+              "correct": 27,
+              "total": 27,
+              "accuracy": 1.0
+            },
+            "reason_conditionally": {
+              "correct": 31,
+              "total": 32,
+              "accuracy": 0.96875
+            }
+          },
+          "improvement_intents": {
+            "describe_type": {
+              "minimum_accuracy": 0.8,
+              "actual": 0.976744
+            },
+            "idiomatic_compare": {
+              "minimum_accuracy": 0.8,
+              "actual": 0.962963
+            }
+          }
+        },
+        "failed_checks": [
+          "reference_language_stability"
+        ],
+        "meets_acceptance_bar": false
+      }
+    },
+    {
+      "name": "linear_svm",
+      "description": "TF-IDF (1-3 grams, 5000 features) + 32 intent features -> Calibrated LinearSVC",
+      "cross_validation": {
+        "folds": 5,
+        "f1_macro_mean": 0.970716,
+        "f1_macro_std": 0.011436
+      },
+      "threshold": {
+        "value": 0.5,
+        "decision": "kept_default_threshold_for_runtime_compatibility",
+        "best_candidate": {
+          "threshold": 0.5,
+          "block_recall": 0.953917,
+          "pass_recall": 0.986784,
+          "accuracy": 0.970721,
+          "score": 6.266565
+        },
+        "reviewed_candidates": [
+          {
+            "threshold": 0.35,
+            "block_recall": 0.958525,
+            "pass_recall": 0.969163,
+            "accuracy": 0.963964,
+            "score": 6.251809
+          },
+          {
+            "threshold": 0.4,
+            "block_recall": 0.953917,
+            "pass_recall": 0.973568,
+            "accuracy": 0.963964,
+            "score": 6.239984
+          },
+          {
+            "threshold": 0.45,
+            "block_recall": 0.953917,
+            "pass_recall": 0.977974,
+            "accuracy": 0.966216,
+            "score": 6.248845
+          },
+          {
+            "threshold": 0.5,
+            "block_recall": 0.953917,
+            "pass_recall": 0.986784,
+            "accuracy": 0.970721,
+            "score": 6.266565
+          },
+          {
+            "threshold": 0.55,
+            "block_recall": 0.940092,
+            "pass_recall": 0.986784,
+            "accuracy": 0.963964,
+            "score": 6.204508
+          },
+          {
+            "threshold": 0.6,
+            "block_recall": 0.930876,
+            "pass_recall": 0.991189,
+            "accuracy": 0.961712,
+            "score": 6.172
+          },
+          {
+            "threshold": 0.65,
+            "block_recall": 0.917051,
+            "pass_recall": 0.991189,
+            "accuracy": 0.954955,
+            "score": 6.109942
+          }
+        ],
+        "default_threshold_metrics": {
+          "threshold": 0.5,
+          "block_recall": 0.953917,
+          "pass_recall": 0.986784,
+          "accuracy": 0.970721,
+          "score": 6.266565
+        }
+      },
+      "evaluation": {
+        "confusion": {
+          "tp": 207,
+          "tn": 224,
+          "fp": 3,
+          "fn": 10,
+          "block_recall": 0.953917,
+          "pass_recall": 0.986784,
+          "accuracy": 0.970721
+        },
+        "per_intent_accuracy": {
+          "assert_unverified": {
+            "correct": 106,
+            "total": 114,
+            "accuracy": 0.929825
+          },
+          "code_content": {
+            "correct": 20,
+            "total": 21,
+            "accuracy": 0.952381
+          },
+          "describe_type": {
+            "correct": 43,
+            "total": 43,
+            "accuracy": 1.0
+          },
+          "idiomatic_compare": {
+            "correct": 26,
+            "total": 27,
+            "accuracy": 0.962963
+          },
+          "reason_conditionally": {
+            "correct": 32,
+            "total": 32,
+            "accuracy": 1.0
+          },
+          "recommend_supported": {
+            "correct": 18,
+            "total": 18,
+            "accuracy": 1.0
+          },
+          "recommend_unverified": {
+            "correct": 57,
+            "total": 59,
+            "accuracy": 0.966102
+          },
+          "reference_language": {
+            "correct": 58,
+            "total": 59,
+            "accuracy": 0.983051
+          },
+          "unchecked_limitation": {
+            "correct": 44,
+            "total": 44,
+            "accuracy": 1.0
+          },
+          "verified_limitation": {
+            "correct": 27,
+            "total": 27,
+            "accuracy": 1.0
+          }
+        },
+        "low_margin_examples": [
+          {
+            "sentence": "The bug is likely related to the async handler",
+            "intent": "assert_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.509953,
+            "margin": 0.009953,
+            "matched": true
+          },
+          {
+            "sentence": "This could be more readable with an early return",
+            "intent": "recommend_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.510325,
+            "margin": 0.010325,
+            "matched": true
+          },
+          {
+            "sentence": "Flag 2: \"The most likely cause is a race condition\"",
+            "intent": "reference_language",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.473715,
+            "margin": 0.026285,
+            "matched": true
+          },
+          {
+            "sentence": "We should rename this method rather than keep the generic name.",
+            "intent": "recommend_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.539637,
+            "margin": 0.039637,
+            "matched": true
+          },
+          {
+            "sentence": "| It seems like the cache | BLOCK | BLOCK | Yes |",
+            "intent": "reference_language",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.452513,
+            "margin": 0.047487,
+            "matched": true
+          },
+          {
+            "sentence": "The generic type could be any subclass of Base",
+            "intent": "describe_type",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.42242,
+            "margin": 0.07758,
+            "matched": true
+          },
+          {
+            "sentence": "I'm somewhat uncertain about the thread safety",
+            "intent": "assert_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.588847,
+            "margin": 0.088847,
+            "matched": true
+          },
+          {
+            "sentence": "The sentence \"I can't confirm this without checking\" should block",
+            "intent": "reference_language",
+            "expected_block": false,
+            "predicted_block": true,
+            "block_probability": 0.591978,
+            "margin": 0.091978,
+            "matched": false
+          },
+          {
+            "sentence": "This seems like it should return early on invalid input",
+            "intent": "recommend_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.596372,
+            "margin": 0.096372,
+            "matched": true
+          },
+          {
+            "sentence": "The response takes roughly 200ms",
+            "intent": "assert_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.602953,
+            "margin": 0.102953,
+            "matched": true
+          },
+          {
+            "sentence": "The assumption guard blocks responses containing \"I assume\"",
+            "intent": "reference_language",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.38801,
+            "margin": 0.11199,
+            "matched": true
+          },
+          {
+            "sentence": "It seems like this should return early on invalid input",
+            "intent": "recommend_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.612305,
+            "margin": 0.112305,
+            "matched": true
+          },
+          {
+            "sentence": "I'm pretty sure the timeout is 30 seconds",
+            "intent": "assert_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.626078,
+            "margin": 0.126078,
+            "matched": true
+          },
+          {
+            "sentence": "I'm reasonably sure the flag is deprecated",
+            "intent": "assert_unverified",
+            "expected_block": true,
+            "predicted_block": false,
+            "block_probability": 0.363436,
+            "margin": 0.136564,
+            "matched": false
+          },
+          {
+            "sentence": "I'm fairly sure this is the only caller",
+            "intent": "assert_unverified",
+            "expected_block": true,
+            "predicted_block": false,
+            "block_probability": 0.340073,
+            "margin": 0.159927,
+            "matched": false
+          },
+          {
+            "sentence": "I'm fairly confident the issue is in the middleware",
+            "intent": "assert_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.664516,
+            "margin": 0.164516,
+            "matched": true
+          },
+          {
+            "sentence": "# maybe rename after cleanup",
+            "intent": "code_content",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.333618,
+            "margin": 0.166382,
+            "matched": true
+          },
+          {
+            "sentence": "The helper could accept a callable or a concrete client instance",
+            "intent": "describe_type",
+            "expected_block": false,
+            "predicted_block": false,
+            "block_probability": 0.328004,
+            "margin": 0.171996,
+            "matched": true
+          },
+          {
+            "sentence": "This seems like it should return early before parsing.",
+            "intent": "recommend_unverified",
+            "expected_block": true,
+            "predicted_block": true,
+            "block_probability": 0.673079,
+            "margin": 0.173079,
+            "matched": true
+          },
+          {
+            "sentence": "`// TODO: probably refactor this`",
+            "intent": "code_content",
+            "expected_block": false,
+            "predicted_block": true,
+            "block_probability": 0.674228,
+            "margin": 0.174228,
+            "matched": false
+          }
+        ],
+        "misclassifications_by_intent": {
+          "assert_unverified": [
+            {
+              "sentence": "I'm reasonably sure the flag is deprecated",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.363436,
+              "margin": 0.136564
+            },
+            {
+              "sentence": "I'm fairly sure this is the only caller",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.340073,
+              "margin": 0.159927
+            },
+            {
+              "sentence": "The response is probably being cached by the proxy",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.166909,
+              "margin": 0.333091
+            },
+            {
+              "sentence": "The field appears to be a number-only input.",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.119663,
+              "margin": 0.380337
+            },
+            {
+              "sentence": "If I recall correctly the limit is 1000",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.102953,
+              "margin": 0.397047
+            },
+            {
+              "sentence": "Processing is relatively fast for this dataset",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.100144,
+              "margin": 0.399856
+            },
+            {
+              "sentence": "The issue is likely that the hook is swallowing the 401 and returning no data.",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.093782,
+              "margin": 0.406218
+            },
+            {
+              "sentence": "The crash might be triggered by concurrent access",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.066424,
+              "margin": 0.433576
+            }
+          ],
+          "code_content": [
+            {
+              "sentence": "`// TODO: probably refactor this`",
+              "expected_block": false,
+              "predicted_block": true,
+              "block_probability": 0.674228,
+              "margin": 0.174228
+            }
+          ],
+          "idiomatic_compare": [
+            {
+              "sentence": "Cache the parsed config rather than reparsing it for each request",
+              "expected_block": false,
+              "predicted_block": true,
+              "block_probability": 0.785254,
+              "margin": 0.285254
+            }
+          ],
+          "recommend_unverified": [
+            {
+              "sentence": "Store this state in the database rather than in memory.",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.275779,
+              "margin": 0.224221
+            },
+            {
+              "sentence": "Store state in the database rather than in memory",
+              "expected_block": true,
+              "predicted_block": false,
+              "block_probability": 0.275314,
+              "margin": 0.224686
+            }
+          ],
+          "reference_language": [
+            {
+              "sentence": "The sentence \"I can't confirm this without checking\" should block",
+              "expected_block": false,
+              "predicted_block": true,
+              "block_probability": 0.591978,
+              "margin": 0.091978
+            }
+          ]
+        }
+      },
+      "regression_cases": [
+        {
+          "text": "I think the timeout is 30 seconds",
+          "group": "assert_unverified",
+          "reason": "first-person factual guess",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.995271
+        },
+        {
+          "text": "The app probably listens on port 3000",
+          "group": "assert_unverified",
+          "reason": "probabilistic factual claim",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.902641
+        },
+        {
+          "text": "As far as I can tell, this endpoint bypasses auth",
+          "group": "assert_unverified",
+          "reason": "unsupported observation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.984388
+        },
+        {
+          "text": "Roughly 20% of the requests hit the fallback path",
+          "group": "assert_unverified",
+          "reason": "approximate claim without evidence",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.9413
+        },
+        {
+          "text": "The risk is relatively low",
+          "group": "assert_unverified",
+          "reason": "subjective approximation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.930532
+        },
+        {
+          "text": "I think this migration already ran in production",
+          "group": "assert_unverified",
+          "reason": "unsupported deployment claim",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.98001
+        },
+        {
+          "text": "Maybe rename this helper to be clearer",
+          "group": "recommend_unverified",
+          "reason": "uncertain recommendation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.992557
+        },
+        {
+          "text": "This could be simplified by extracting a helper",
+          "group": "recommend_unverified",
+          "reason": "speculative improvement claim",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.938613
+        },
+        {
+          "text": "We should probably add a unit test here",
+          "group": "recommend_unverified",
+          "reason": "uncertain recommendation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.934482
+        },
+        {
+          "text": "I'm not sure because I have not checked the config yet",
+          "group": "recommend_unverified",
+          "reason": "explicitly unchecked claim",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.940706
+        },
+        {
+          "text": "Deploy to staging rather than directly to production",
+          "group": "recommend_unverified",
+          "reason": "unsupported context-specific recommendation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.865972
+        },
+        {
+          "text": "Consider using TypeScript rather than plain JavaScript",
+          "group": "recommend_unverified",
+          "reason": "unsupported technology recommendation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.831488
+        },
+        {
+          "text": "Store state in the database rather than in memory",
+          "group": "recommend_unverified",
+          "reason": "unsupported architecture recommendation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.87223
+        },
+        {
+          "text": "Probably worth adding integration coverage for this path",
+          "group": "recommend_unverified",
+          "reason": "hedged recommendation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.984645
+        },
+        {
+          "text": "I have not checked the external API documentation for this",
+          "group": "unchecked_limitation",
+          "reason": "unverified limitation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.933447
+        },
+        {
+          "text": "This requires running the test suite to confirm",
+          "group": "unchecked_limitation",
+          "reason": "needs verification",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.94359
+        },
+        {
+          "text": "Off the top of my head, I don't know whether this is enabled in prod",
+          "group": "unchecked_limitation",
+          "reason": "admitted uncertainty",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.983743
+        },
+        {
+          "text": "Without reading the migration, I can't confirm the default",
+          "group": "unchecked_limitation",
+          "reason": "unchecked limitation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.855459
+        },
+        {
+          "text": "I haven't checked whether this retry policy comes from the SDK",
+          "group": "unchecked_limitation",
+          "reason": "not yet verified",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.927436
+        },
+        {
+          "text": "This requires benchmarking to know for sure",
+          "group": "unchecked_limitation",
+          "reason": "needs external verification",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.890858
+        },
+        {
+          "text": "I checked package.json and requirements.txt and cannot confirm the config value from this repo.",
+          "group": "verified_limitation",
+          "reason": "verified limitation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.072082
+        },
+        {
+          "text": "I searched the codebase and cannot confirm the production timeout value.",
+          "group": "verified_limitation",
+          "reason": "checked repo before limiting claim",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.264851
+        },
+        {
+          "text": "I checked the Dockerfile and CI workflow and cannot confirm the deployed image tag from this repo.",
+          "group": "verified_limitation",
+          "reason": "evidence-backed limitation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.072112
+        },
+        {
+          "text": "I searched the release workflow and deployment scripts and cannot determine which environment variable wins in production.",
+          "group": "verified_limitation",
+          "reason": "verified limitation after inspection",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.001447
+        },
+        {
+          "text": "I inspected the API client and mock responses and cannot confirm the live payload without hitting the running service.",
+          "group": "verified_limitation",
+          "reason": "explicitly checked local evidence",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.000907
+        },
+        {
+          "text": "The return value could be None or a string",
+          "group": "describe_type",
+          "reason": "type description",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.006193
+        },
+        {
+          "text": "The callback may return either a cleanup function or nothing",
+          "group": "describe_type",
+          "reason": "type alternative",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.006581
+        },
+        {
+          "text": "The token could be bytes or a base64 string",
+          "group": "describe_type",
+          "reason": "shape description",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.006418
+        },
+        {
+          "text": "The field might be absent on older payloads",
+          "group": "describe_type",
+          "reason": "schema description",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.054081
+        },
+        {
+          "text": "The handler could receive either text or binary frames",
+          "group": "describe_type",
+          "reason": "type variant",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.00357
+        },
+        {
+          "text": "When the cache is cold, this may take longer",
+          "group": "reason_conditionally",
+          "reason": "conditional reasoning",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.074611
+        },
+        {
+          "text": "If the token expires, the middleware would return 401",
+          "group": "reason_conditionally",
+          "reason": "conditional behavior",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.003115
+        },
+        {
+          "text": "Without a default case, this switch could fall through unexpectedly",
+          "group": "reason_conditionally",
+          "reason": "conditional control flow",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.030044
+        },
+        {
+          "text": "If the env var is unset, the loader would fall back to the default path",
+          "group": "reason_conditionally",
+          "reason": "conditional default behavior",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.031022
+        },
+        {
+          "text": "With debug logging enabled, this path may allocate more strings",
+          "group": "reason_conditionally",
+          "reason": "conditional side effect",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.02925
+        },
+        {
+          "text": "The hook flagged \"probably\" in the response",
+          "group": "reference_language",
+          "reason": "meta discussion",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.0007
+        },
+        {
+          "text": "The phrase \"I haven't checked\" should trigger the hook",
+          "group": "reference_language",
+          "reason": "quoted trigger explanation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.016764
+        },
+        {
+          "text": "\"Maybe rename this helper\" belongs in recommend_unverified",
+          "group": "reference_language",
+          "reason": "taxonomy discussion",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.007753
+        },
+        {
+          "text": "The acceptance report includes per-intent accuracy for describe_type",
+          "group": "reference_language",
+          "reason": "report discussion",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.054876
+        },
+        {
+          "text": "The detector matched \"off the top of my head\" in the sample response",
+          "group": "reference_language",
+          "reason": "meta detection language",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.00103
+        },
+        {
+          "text": "The comment says `# might be null here`",
+          "group": "code_content",
+          "reason": "quoted code comment",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.008225
+        },
+        {
+          "text": "`// TODO: probably refactor this`",
+          "group": "code_content",
+          "reason": "literal code content",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.160717
+        },
+        {
+          "text": "In the example: `// probably remove after migration`",
+          "group": "code_content",
+          "reason": "inline code quote",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.006899
+        },
+        {
+          "text": "# maybe rename after cleanup",
+          "group": "code_content",
+          "reason": "comment text",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.070895
+        },
+        {
+          "text": "Use map rather than forEach here",
+          "group": "idiomatic_compare",
+          "reason": "idiomatic compare",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.10723
+        },
+        {
+          "text": "Return early rather than nesting multiple conditions",
+          "group": "idiomatic_compare",
+          "reason": "idiomatic control-flow advice",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.11822
+        },
+        {
+          "text": "Use a context manager rather than manual close calls",
+          "group": "idiomatic_compare",
+          "reason": "idiomatic resource handling advice",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.26572
+        },
+        {
+          "text": "Reuse the compiled regex rather than rebuilding it each call",
+          "group": "idiomatic_compare",
+          "reason": "localized implementation advice",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.101556
+        },
+        {
+          "text": "Prefer a named constant over the literal `3000`",
+          "group": "idiomatic_compare",
+          "reason": "idiomatic readability advice",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.052942
+        },
+        {
+          "text": "I searched the repo and this helper is only called once, so renaming it should be safe.",
+          "group": "recommend_supported",
+          "reason": "evidence-backed recommendation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.02573
+        },
+        {
+          "text": "I reviewed the tests and there is no coverage for the retry path, so adding a unit test would cover a real gap.",
+          "group": "recommend_supported",
+          "reason": "supported test recommendation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.02366
+        },
+        {
+          "text": "I inspected the config loader and env parsing is duplicated in two modules, so extracting a shared parser would reduce drift.",
+          "group": "recommend_supported",
+          "reason": "supported refactor recommendation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.027305
+        },
+        {
+          "text": "I checked the trace and this client is created on every request, so reusing it would remove repeated setup work.",
+          "group": "recommend_supported",
+          "reason": "supported performance recommendation",
+          "expected_block": false,
+          "predicted_block": false,
+          "matched": true,
+          "block_probability": 0.023868
+        },
+        {
+          "text": "The dev server might be down.",
+          "group": "assert_unverified",
+          "reason": "live transcript factual guess",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.904903
+        },
+        {
+          "text": "This single component should probably be split.",
+          "group": "recommend_unverified",
+          "reason": "live transcript recommendation hedge",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.93187
+        },
+        {
+          "text": "I need to verify the LTV math.",
+          "group": "unchecked_limitation",
+          "reason": "live transcript unchecked limitation",
+          "expected_block": true,
+          "predicted_block": true,
+          "matched": true,
+          "block_probability": 0.947788
+        }
+      ],
+      "regression_summary": {
+        "cases": 56,
+        "matched": 56
+      },
+      "acceptance": {
+        "criteria": {
+          "regression_cases_match": true,
+          "block_recall_target": 0.95,
+          "pass_recall_target": 0.85,
+          "review_intents": {
+            "reference_language": {
+              "correct": 58,
+              "total": 59,
+              "accuracy": 0.983051
+            },
+            "verified_limitation": {
+              "correct": 27,
+              "total": 27,
+              "accuracy": 1.0
+            },
+            "reason_conditionally": {
+              "correct": 32,
+              "total": 32,
+              "accuracy": 1.0
+            }
+          },
+          "improvement_intents": {
+            "describe_type": {
+              "minimum_accuracy": 0.8,
+              "actual": 1.0
+            },
+            "idiomatic_compare": {
+              "minimum_accuracy": 0.8,
+              "actual": 0.962963
+            }
+          }
+        },
+        "failed_checks": [],
+        "meets_acceptance_bar": true
+      }
+    }
+  ],
+  "recommended_model": {
+    "name": "linear_svm",
+    "reason": "highest-ranked candidate by acceptance bar, block recall, pass recall, regression coverage, and macro F1"
+  }
+}

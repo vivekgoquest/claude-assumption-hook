@@ -1,62 +1,338 @@
 [
   {
-    "text": "Maybe rename this helper to be clearer",
+    "group": "assert_unverified",
+    "text": "I think the timeout is 30 seconds",
     "expected_block": true,
-    "reason": "unverified recommendation"
+    "reason": "first-person factual guess"
   },
   {
+    "group": "assert_unverified",
+    "text": "The app probably listens on port 3000",
+    "expected_block": true,
+    "reason": "probabilistic factual claim"
+  },
+  {
+    "group": "assert_unverified",
+    "text": "As far as I can tell, this endpoint bypasses auth",
+    "expected_block": true,
+    "reason": "unsupported observation"
+  },
+  {
+    "group": "assert_unverified",
+    "text": "Roughly 20% of the requests hit the fallback path",
+    "expected_block": true,
+    "reason": "approximate claim without evidence"
+  },
+  {
+    "group": "assert_unverified",
+    "text": "The risk is relatively low",
+    "expected_block": true,
+    "reason": "subjective approximation"
+  },
+  {
+    "group": "assert_unverified",
+    "text": "I think this migration already ran in production",
+    "expected_block": true,
+    "reason": "unsupported deployment claim"
+  },
+  {
+    "group": "recommend_unverified",
+    "text": "Maybe rename this helper to be clearer",
+    "expected_block": true,
+    "reason": "uncertain recommendation"
+  },
+  {
+    "group": "recommend_unverified",
     "text": "This could be simplified by extracting a helper",
     "expected_block": true,
     "reason": "speculative improvement claim"
   },
   {
+    "group": "recommend_unverified",
     "text": "We should probably add a unit test here",
     "expected_block": true,
     "reason": "uncertain recommendation"
   },
   {
+    "group": "recommend_unverified",
     "text": "I'm not sure because I have not checked the config yet",
     "expected_block": true,
     "reason": "explicitly unchecked claim"
   },
   {
+    "group": "recommend_unverified",
+    "text": "Deploy to staging rather than directly to production",
+    "expected_block": true,
+    "reason": "unsupported context-specific recommendation"
+  },
+  {
+    "group": "recommend_unverified",
+    "text": "Consider using TypeScript rather than plain JavaScript",
+    "expected_block": true,
+    "reason": "unsupported technology recommendation"
+  },
+  {
+    "group": "recommend_unverified",
+    "text": "Store state in the database rather than in memory",
+    "expected_block": true,
+    "reason": "unsupported architecture recommendation"
+  },
+  {
+    "group": "recommend_unverified",
+    "text": "Probably worth adding integration coverage for this path",
+    "expected_block": true,
+    "reason": "hedged recommendation"
+  },
+  {
+    "group": "unchecked_limitation",
     "text": "I have not checked the external API documentation for this",
     "expected_block": true,
     "reason": "unverified limitation"
   },
   {
+    "group": "unchecked_limitation",
+    "text": "This requires running the test suite to confirm",
+    "expected_block": true,
+    "reason": "needs verification"
+  },
+  {
+    "group": "unchecked_limitation",
+    "text": "Off the top of my head, I don't know whether this is enabled in prod",
+    "expected_block": true,
+    "reason": "admitted uncertainty"
+  },
+  {
+    "group": "unchecked_limitation",
+    "text": "Without reading the migration, I can't confirm the default",
+    "expected_block": true,
+    "reason": "unchecked limitation"
+  },
+  {
+    "group": "unchecked_limitation",
+    "text": "I haven't checked whether this retry policy comes from the SDK",
+    "expected_block": true,
+    "reason": "not yet verified"
+  },
+  {
+    "group": "unchecked_limitation",
+    "text": "This requires benchmarking to know for sure",
+    "expected_block": true,
+    "reason": "needs external verification"
+  },
+  {
+    "group": "verified_limitation",
     "text": "I checked package.json and requirements.txt and cannot confirm the config value from this repo.",
     "expected_block": false,
     "reason": "verified limitation"
   },
   {
-    "text": "The app probably listens on port 3000",
-    "expected_block": true,
-    "reason": "factual guess"
-  },
-  {
-    "text": "I think this migration already ran in production",
-    "expected_block": true,
-    "reason": "first-person unverified assertion"
-  },
-  {
-    "text": "The hook flagged \"probably\" in the response",
+    "group": "verified_limitation",
+    "text": "I searched the codebase and cannot confirm the production timeout value.",
     "expected_block": false,
-    "reason": "meta discussion"
+    "reason": "checked repo before limiting claim"
   },
   {
+    "group": "verified_limitation",
+    "text": "I checked the Dockerfile and CI workflow and cannot confirm the deployed image tag from this repo.",
+    "expected_block": false,
+    "reason": "evidence-backed limitation"
+  },
+  {
+    "group": "verified_limitation",
+    "text": "I searched the release workflow and deployment scripts and cannot determine which environment variable wins in production.",
+    "expected_block": false,
+    "reason": "verified limitation after inspection"
+  },
+  {
+    "group": "verified_limitation",
+    "text": "I inspected the API client and mock responses and cannot confirm the live payload without hitting the running service.",
+    "expected_block": false,
+    "reason": "explicitly checked local evidence"
+  },
+  {
+    "group": "describe_type",
     "text": "The return value could be None or a string",
     "expected_block": false,
     "reason": "type description"
   },
   {
+    "group": "describe_type",
+    "text": "The callback may return either a cleanup function or nothing",
+    "expected_block": false,
+    "reason": "type alternative"
+  },
+  {
+    "group": "describe_type",
+    "text": "The token could be bytes or a base64 string",
+    "expected_block": false,
+    "reason": "shape description"
+  },
+  {
+    "group": "describe_type",
+    "text": "The field might be absent on older payloads",
+    "expected_block": false,
+    "reason": "schema description"
+  },
+  {
+    "group": "describe_type",
+    "text": "The handler could receive either text or binary frames",
+    "expected_block": false,
+    "reason": "type variant"
+  },
+  {
+    "group": "reason_conditionally",
     "text": "When the cache is cold, this may take longer",
     "expected_block": false,
     "reason": "conditional reasoning"
   },
   {
+    "group": "reason_conditionally",
+    "text": "If the token expires, the middleware would return 401",
+    "expected_block": false,
+    "reason": "conditional behavior"
+  },
+  {
+    "group": "reason_conditionally",
+    "text": "Without a default case, this switch could fall through unexpectedly",
+    "expected_block": false,
+    "reason": "conditional control flow"
+  },
+  {
+    "group": "reason_conditionally",
+    "text": "If the env var is unset, the loader would fall back to the default path",
+    "expected_block": false,
+    "reason": "conditional default behavior"
+  },
+  {
+    "group": "reason_conditionally",
+    "text": "With debug logging enabled, this path may allocate more strings",
+    "expected_block": false,
+    "reason": "conditional side effect"
+  },
+  {
+    "group": "reference_language",
+    "text": "The hook flagged \"probably\" in the response",
+    "expected_block": false,
+    "reason": "meta discussion"
+  },
+  {
+    "group": "reference_language",
+    "text": "The phrase \"I haven't checked\" should trigger the hook",
+    "expected_block": false,
+    "reason": "quoted trigger explanation"
+  },
+  {
+    "group": "reference_language",
+    "text": "\"Maybe rename this helper\" belongs in recommend_unverified",
+    "expected_block": false,
+    "reason": "taxonomy discussion"
+  },
+  {
+    "group": "reference_language",
+    "text": "The acceptance report includes per-intent accuracy for describe_type",
+    "expected_block": false,
+    "reason": "report discussion"
+  },
+  {
+    "group": "reference_language",
+    "text": "The detector matched \"off the top of my head\" in the sample response",
+    "expected_block": false,
+    "reason": "meta detection language"
+  },
+  {
+    "group": "code_content",
+    "text": "The comment says `# might be null here`",
+    "expected_block": false,
+    "reason": "quoted code comment"
+  },
+  {
+    "group": "code_content",
+    "text": "`// TODO: probably refactor this`",
+    "expected_block": false,
+    "reason": "literal code content"
+  },
+  {
+    "group": "code_content",
+    "text": "In the example: `// probably remove after migration`",
+    "expected_block": false,
+    "reason": "inline code quote"
+  },
+  {
+    "group": "code_content",
+    "text": "# maybe rename after cleanup",
+    "expected_block": false,
+    "reason": "comment text"
+  },
+  {
+    "group": "idiomatic_compare",
     "text": "Use map rather than forEach here",
     "expected_block": false,
-    "reason": "idiomatic comparison"
+    "reason": "idiomatic compare"
+  },
+  {
+    "group": "idiomatic_compare",
+    "text": "Return early rather than nesting multiple conditions",
+    "expected_block": false,
+    "reason": "idiomatic control-flow advice"
+  },
+  {
+    "group": "idiomatic_compare",
+    "text": "Use a context manager rather than manual close calls",
+    "expected_block": false,
+    "reason": "idiomatic resource handling advice"
+  },
+  {
+    "group": "idiomatic_compare",
+    "text": "Reuse the compiled regex rather than rebuilding it each call",
+    "expected_block": false,
+    "reason": "localized implementation advice"
+  },
+  {
+    "group": "idiomatic_compare",
+    "text": "Prefer a named constant over the literal `3000`",
+    "expected_block": false,
+    "reason": "idiomatic readability advice"
+  },
+  {
+    "group": "recommend_supported",
+    "text": "I searched the repo and this helper is only called once, so renaming it should be safe.",
+    "expected_block": false,
+    "reason": "evidence-backed recommendation"
+  },
+  {
+    "group": "recommend_supported",
+    "text": "I reviewed the tests and there is no coverage for the retry path, so adding a unit test would cover a real gap.",
+    "expected_block": false,
+    "reason": "supported test recommendation"
+  },
+  {
+    "group": "recommend_supported",
+    "text": "I inspected the config loader and env parsing is duplicated in two modules, so extracting a shared parser would reduce drift.",
+    "expected_block": false,
+    "reason": "supported refactor recommendation"
+  },
+  {
+    "group": "recommend_supported",
+    "text": "I checked the trace and this client is created on every request, so reusing it would remove repeated setup work.",
+    "expected_block": false,
+    "reason": "supported performance recommendation"
+  },
+  {
+    "group": "assert_unverified",
+    "text": "The dev server might be down.",
+    "expected_block": true,
+    "reason": "live transcript factual guess"
+  },
+  {
+    "group": "recommend_unverified",
+    "text": "This single component should probably be split.",
+    "expected_block": true,
+    "reason": "live transcript recommendation hedge"
+  },
+  {
+    "group": "unchecked_limitation",
+    "text": "I need to verify the LTV math.",
+    "expected_block": true,
+    "reason": "live transcript unchecked limitation"
   }
 ]

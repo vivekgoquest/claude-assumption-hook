@@ -1,0 +1,92 @@
+[
+  {
+    "group": "recommend_unverified",
+    "text": "Remove \"Open preview in new tab\" from the primary bar",
+    "expected_block": true,
+    "reason": "transcript-derived from c9f2f345-14b3-4776-9ab6-e68922f74ab5.jsonl"
+  },
+  {
+    "group": "reason_conditionally",
+    "text": "When toggled open, it covers the agent panel and terminal entirely.",
+    "expected_block": false,
+    "reason": "transcript-derived from c9f2f345-14b3-4776-9ab6-e68922f74ab5.jsonl"
+  },
+  {
+    "group": "reason_conditionally",
+    "text": "If it hasn't, the task text gets swallowed.",
+    "expected_block": false,
+    "reason": "transcript-derived from c9f2f345-14b3-4776-9ab6-e68922f74ab5.jsonl"
+  },
+  {
+    "group": "reason_conditionally",
+    "text": "if it does not read like a presentation yet, revise theme.css or slide-local CSS before finalizing.\"*",
+    "expected_block": false,
+    "reason": "transcript-derived from a254558b-c120-43e0-aa5e-99e07752f143.jsonl"
+  },
+  {
+    "group": "reference_language",
+    "text": "The PRD's intent is that the agent should be its own design critic, but it accepted clearly low-quality output.",
+    "expected_block": false,
+    "reason": "transcript-derived from a254558b-c120-43e0-aa5e-99e07752f143.jsonl"
+  },
+  {
+    "group": "reason_conditionally",
+    "text": "If it can only say \"I changed the colors,\" it hasn't designed.",
+    "expected_block": false,
+    "reason": "transcript-derived from a254558b-c120-43e0-aa5e-99e07752f143.jsonl"
+  },
+  {
+    "group": "reason_conditionally",
+    "text": "If it can't articulate why slide 2 looks different from slide 3, it hasn't designed.",
+    "expected_block": false,
+    "reason": "transcript-derived from a254558b-c120-43e0-aa5e-99e07752f143.jsonl"
+  },
+  {
+    "group": "assert_unverified",
+    "text": "The Python code block at the end appears to be context about how the user might have tried to automate this",
+    "expected_block": true,
+    "reason": "transcript-derived from ee5aa285-a784-4537-9a80-811ccf4e2b26.jsonl"
+  },
+  {
+    "group": "assert_unverified",
+    "text": "Slide navigation (likely keyboard/dot nav)",
+    "expected_block": true,
+    "reason": "transcript-derived from b7d78d7e-46a5-479f-bb09-62b39300fffb.jsonl"
+  },
+  {
+    "group": "recommend_unverified",
+    "text": "The plan proposes: move `templates/` \u2192 `framework/templates/`, delete the two dead files, and clean up the code paths that reference them.",
+    "expected_block": true,
+    "reason": "transcript-derived from 0ea6a1c5-c902-4471-b0e1-8567f1cde49b.jsonl"
+  },
+  {
+    "group": "recommend_unverified",
+    "text": "I'll use the browser automation tools to navigate, observe, and evaluate the interface systematically.",
+    "expected_block": true,
+    "reason": "transcript-derived from caecfefe-fd32-47ef-ad25-54f40b733ede.jsonl"
+  },
+  {
+    "group": "reference_language",
+    "text": "The policy heavily enforces TODO replacement, making these files act as **policy-blocking gates** rather than substantive templates.",
+    "expected_block": false,
+    "reason": "transcript-derived from agent-a1844c82345df706f.jsonl"
+  },
+  {
+    "group": "assert_unverified",
+    "text": "Several files could easily be hardcoded into services.",
+    "expected_block": true,
+    "reason": "transcript-derived from agent-a1844c82345df706f.jsonl"
+  },
+  {
+    "group": "assert_unverified",
+    "text": "The service could generate this inline.",
+    "expected_block": true,
+    "reason": "transcript-derived from agent-a1844c82345df706f.jsonl"
+  },
+  {
+    "group": "assert_unverified",
+    "text": "could hardcode structure but {{SLIDE_COUNT}}, {{SLIDE_BATCH_SIZE}}, and {{SLIDE_PLAN}} substitutions are needed.",
+    "expected_block": true,
+    "reason": "transcript-derived from agent-a1844c82345df706f.jsonl"
+  }
+]

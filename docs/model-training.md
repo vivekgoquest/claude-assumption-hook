@@ -2,105 +2,185 @@
 
 ## Overview
 
-The Assumption Guard classifier is a binary line-level model:
+Assumption Guard v2 is a clause-level multiclass classifier with a deterministic runtime wrapper. The model does not replace rules; it handles only the ambiguous middle after hard-pass, hard-block, and regex filtering.
 
-- `1` = BLOCK
-- `0` = PASS
-
-It is trained only on regex-flagged lines. Its job is not to replace regex, but to decide whether the flagged line is genuinely unverified uncertainty or a known false positive.
-
-## Current Dataset
-
-The committed dataset lives at `training/assumption-guard-training-labeled.jsonl`.
-
-Current counts:
-
-- rows: 253
-- block: 102
-- pass: 151
-
-Intent buckets:
+The committed runtime label set is:
 
 - `assert_unverified`
 - `recommend_unverified`
 - `unchecked_limitation`
 - `reference_language`
-- `describe_type`
-- `compare`
-- `reason_conditionally`
 - `verified_limitation`
+- `describe_type`
+- `reason_conditionally`
 - `code_content`
+- `idiomatic_compare`
+- `recommend_supported`
 
-The key v1.1 shift is that unchecked limitations and uncertain recommendations are now BLOCK examples. Verified limitations remain PASS only when the sentence already states what was checked.
+Runtime maps the first three classes to BLOCK and the rest to PASS.
 
-## Feature Set
+## Dataset
 
-The training pipeline reuses the production definitions in `hook/assumption_guard_model.py`.
+The committed corpus lives at `training/assumption-guard-training-labeled.jsonl`.
 
-### Text features
+Current counts from the committed v2 report:
 
-- TF-IDF
-- n-grams: 1-3
-- max features: 5000
-- sublinear TF scaling
+- rows: `467`
+- train/dev/test split: `334 / 67 / 66`
 
-### Intent features
+Intent counts:
 
-There are 14 structural signals:
+- `assert_unverified`: `120`
+- `recommend_unverified`: `66`
+- `unchecked_limitation`: `45`
+- `reference_language`: `61`
+- `verified_limitation`: `27`
+- `describe_type`: `44`
+- `reason_conditionally`: `37`
+- `code_content`: `21`
+- `idiomatic_compare`: `28`
+- `recommend_supported`: `18`
 
-1. table row
-2. code comment
-3. trigger only in backticks
-4. meta words
-5. type keywords
-6. conditional start
-7. trigger in quotes
-8. hedge density
-9. line length
-10. first-person epistemic start
-11. improvement/review words
-12. verification evidence
-13. unchecked limitation language
-14. uncertainty admission start
+Each row uses the v2 schema:
 
-## Training Command
+- `id`
+- `text`
+- `block`
+- `intent`
+- `source_type`
+- `source_hash`
+- `evidence_present`
+- `quoted_or_code`
+- `review_status`
+- `notes`
+
+`source_hash` is used for split stability so clauses from the same source do not get randomly scattered across train/dev/test.
+
+## Transcript Mining
+
+The transcript mining script is:
+
+```bash
+python3.11 training/mine_transcripts_v2.py --output /tmp/assumption-guard-mined-v2.jsonl
+```
+
+It currently:
+
+- reads local Claude transcript JSONL files from `/Users/vivek/.claude/projects`
+- extracts assistant text only
+- splits messages into clauses
+- weak-matches risky and safe-lane language
+- sanitizes paths, URLs, emails, IDs, and obvious secrets
+- emits reviewable JSONL rows in the v2 schema
+
+Only sanitized, derived examples should be committed to the repo.
+
+## Training Stack
+
+The current checked-in v2 training path uses:
+
+- Python 3.11
+- `torch`
+- `transformers`
+- `onnx`
+- `onnxruntime`
+- `scikit-learn`
+- `rapidfuzz`
+
+Candidate families trained by `training/train_v2.py`:
+
+1. baseline: hashed TF-IDF + calibrated linear SVM
+2. candidate A: `sentence-transformers/all-MiniLM-L6-v2`
+3. candidate B: `microsoft/deberta-v3-small`
+
+## Train Command
 
 Run from the repo root:
 
 ```bash
-python3 training/train_assumption_guard.py
+python3.11 training/train_v2.py
 ```
 
-This command:
+The script will:
 
-- loads the labeled JSONL dataset
-- runs 5-fold stratified CV with `random_state=42`
-- trains the final pipeline on the full dataset
-- writes `model/assumption-guard-model.pkl`
-- writes `model/assumption-guard-metrics.json`
-- evaluates the regression fixture at `training/assumption-guard-regression-cases.json`
+1. load and normalize the labeled dataset
+2. split by stable `source_hash`
+3. train the baseline and transformer candidates
+4. search thresholds from `0.20` to `0.80` in `0.02` steps
+5. evaluate regression and replay fixtures
+6. export the selected transformer to ONNX
+7. write the tokenizer, metadata, and final report
 
-## Current Metrics
+Generated artifacts:
 
-From the committed metrics artifact:
+- `model/assumption-guard-v2.onnx`
+- `model/assumption-guard-v2-tokenizer.json`
+- `model/assumption-guard-v2-meta.json`
+- `model/assumption-guard-v2-report.json`
 
-- F1 macro mean: 0.887265
-- F1 macro std: 0.029485
-- regression fixture: 12/12 matched
-- model size: 191,925 bytes
+## Selection Logic
 
-## Regression Fixture
+Candidate selection currently enforces:
 
-The regression fixture is checked in at `training/assumption-guard-regression-cases.json`.
+- full regression fixture match
+- dev-set recall floor
+- replay coverage floors
+- preference for the smallest transformer that clears the gates
 
-It covers:
+The chosen runtime threshold is written into `model/assumption-guard-v2-meta.json` and is not tuned at runtime.
 
-- strict-policy blocks for uncertain recommendations
-- strict-policy blocks for unchecked limitations
-- factual guesses
-- known PASS cases for meta discussion, type analysis, conditionals, idioms, and verified limitations
+Current selected model:
 
-This fixture is part of both the training output and the unittest suite.
+- `sentence-transformers/all-MiniLM-L6-v2`
+- threshold: `0.20`
+
+## Current Report Snapshot
+
+From `model/assumption-guard-v2-report.json`:
+
+- regression fixture: `56 / 56`
+- replay corpus: `15 / 15`
+- held-out test confusion: `27 TP / 39 TN / 0 FP / 0 FN`
+- ONNX parity max abs delta: within the configured `1e-3` bound
+- all acceptance gates: `true`
+
+Candidate summary:
+
+- baseline linear SVM: replay `1.0 / 1.0`, regression `49 / 56`
+- MiniLM-L6: replay `1.0 / 1.0`, regression `56 / 56`
+- DeBERTa-v3-small: replay `1.0 / 1.0`, regression `56 / 56`
+
+MiniLM is selected because it clears the gates and is smaller than DeBERTa.
+
+## Acceptance Gates
+
+The committed report evaluates:
+
+- `regression_full_match`
+- `replay_block_recall >= 0.95`
+- `replay_pass_recall >= 0.95`
+- `reference_language` accuracy gate
+- `verified_limitation` accuracy gate
+- `reason_conditionally` accuracy gate
+- `describe_type` accuracy gate
+- `idiomatic_compare` accuracy gate
+- ONNX parity gate
+- latency gate
+
+On non-native Apple Silicon training environments, the report records `latency_environment_matches_target: false` and does not fail the run on that hardware mismatch.
+
+## Replay Evaluation
+
+Use the replay script to re-check committed assets without retraining:
+
+```bash
+python3.11 training/replay_eval_v2.py \
+  --regression-cases training/assumption-guard-regression-cases.json \
+  --model model/assumption-guard-v2.onnx \
+  --tokenizer model/assumption-guard-v2-tokenizer.json \
+  --meta model/assumption-guard-v2-meta.json \
+  --output /tmp/assumption-guard-v2-replay.json
+```
 
 ## Verification
 
@@ -112,7 +192,8 @@ python3 -m unittest discover -s tests -v
 
 That suite verifies:
 
-- hook behavior against the regression fixture
-- regex-only fallback when ML imports fail
-- regex-only fallback when the pickle is corrupt
-- reproducible training metrics and pickle loadability
+- clause splitting
+- fallback behavior when ONNX deps or assets are missing
+- regression fixture behavior through the hook
+- replay evaluation against the committed assets
+- presence of the committed v2 artifacts and report gates

@@ -70,35 +70,27 @@ Install the optional runtime dependencies:
 pip install onnxruntime tokenizers
 ```
 
-Copy the packaged hook:
+Run the installer:
 
 ```bash
-mkdir -p ~/.claude/hooks
-rm -rf ~/.claude/hooks/assumption-guard
-cp -R hook/assumption-guard ~/.claude/hooks/
+bash hook/assumption-guard/install.sh
 ```
 
-Point Claude Code at the packaged script in `~/.claude/settings.json`:
+The installer:
 
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/assumption-guard/assumption-guard.py",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  }
-}
+- copies `hook/assumption-guard/` into `~/.claude/hooks/assumption-guard/`
+- creates `~/.claude/hooks/assumption-guard/state/`
+- adds the Stop hook command to `~/.claude/settings.json` without removing unrelated settings
+
+The installed Stop hook command is:
+
+```bash
+python3 ~/.claude/hooks/assumption-guard/assumption-guard.py
 ```
 
 Then start a new Claude Code session.
+
+If you prefer to install manually, the equivalent settings snippet is in `hook/assumption-guard/settings-snippet.json`.
 
 ## Repo Layout
 
@@ -108,6 +100,7 @@ This repo is intentionally small:
 hook/
 └── assumption-guard/
     ├── assumption-guard.py
+    ├── install.sh
     ├── settings-snippet.json
     ├── assumption-guard-v2.onnx
     ├── assumption-guard-v2-tokenizer.json

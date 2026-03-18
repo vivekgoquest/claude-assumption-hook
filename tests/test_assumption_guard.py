@@ -12,6 +12,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HOOK_PACKAGE_DIR = REPO_ROOT / "hook" / "assumption-guard"
 HOOK_PATH = HOOK_PACKAGE_DIR / "assumption-guard.py"
+INSTALLER_PATH = HOOK_PACKAGE_DIR / "install.sh"
 MODEL_PATH = HOOK_PACKAGE_DIR / "assumption-guard-v2.onnx"
 TOKENIZER_PATH = HOOK_PACKAGE_DIR / "assumption-guard-v2-tokenizer.json"
 META_PATH = HOOK_PACKAGE_DIR / "assumption-guard-v2-meta.json"
@@ -312,6 +313,7 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
 
     def test_packaged_assets_and_baseline_exist(self):
         self.assertTrue(HOOK_PACKAGE_DIR.exists())
+        self.assertTrue(INSTALLER_PATH.exists())
         self.assertTrue(MODEL_PATH.exists())
         self.assertTrue(TOKENIZER_PATH.exists())
         self.assertTrue(META_PATH.exists())
@@ -330,6 +332,86 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
         settings = json.loads((HOOK_PACKAGE_DIR / "settings-snippet.json").read_text())
         command = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
         self.assertEqual(command, "python3 ~/.claude/hooks/assumption-guard/assumption-guard.py")
+
+    def test_installer_copies_package_and_merges_settings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home_dir = Path(tmpdir) / "home"
+            claude_dir = home_dir / ".claude"
+            hooks_dir = claude_dir / "hooks"
+            hooks_dir.mkdir(parents=True, exist_ok=True)
+            settings_path = claude_dir / "settings.json"
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "theme": "dark",
+                        "hooks": {
+                            "PreToolUse": [
+                                {
+                                    "hooks": [
+                                        {
+                                            "type": "command",
+                                            "command": "echo pretool",
+                                            "timeout": 5,
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                    },
+                    indent=2,
+                )
+            )
+            result = subprocess.run(
+                ["bash", str(INSTALLER_PATH)],
+                capture_output=True,
+                text=True,
+                cwd=REPO_ROOT,
+                env={**os.environ, "HOME": str(home_dir)},
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            installed_dir = hooks_dir / "assumption-guard"
+            installed_script = installed_dir / "assumption-guard.py"
+            installed_settings_snippet = installed_dir / "settings-snippet.json"
+            self.assertTrue(installed_dir.exists())
+            self.assertTrue(installed_script.exists())
+            self.assertTrue(installed_settings_snippet.exists())
+            self.assertTrue((installed_dir / "baseline" / "assumption-guard-training-labeled.jsonl").exists())
+            self.assertTrue((installed_dir / "state").exists())
+
+            merged_settings = json.loads(settings_path.read_text())
+            self.assertEqual(merged_settings["theme"], "dark")
+            self.assertIn("PreToolUse", merged_settings["hooks"])
+            stop_entries = merged_settings["hooks"]["Stop"]
+            commands = [
+                hook["command"]
+                for entry in stop_entries
+                for hook in entry.get("hooks", [])
+                if hook.get("type") == "command"
+            ]
+            self.assertIn("python3 ~/.claude/hooks/assumption-guard/assumption-guard.py", commands)
+
+            rerun = subprocess.run(
+                ["bash", str(INSTALLER_PATH)],
+                capture_output=True,
+                text=True,
+                cwd=REPO_ROOT,
+                env={**os.environ, "HOME": str(home_dir)},
+                check=False,
+            )
+            self.assertEqual(rerun.returncode, 0, rerun.stderr)
+            rerun_settings = json.loads(settings_path.read_text())
+            stop_commands = [
+                hook["command"]
+                for entry in rerun_settings["hooks"]["Stop"]
+                for hook in entry.get("hooks", [])
+                if hook.get("type") == "command"
+            ]
+            self.assertEqual(
+                stop_commands.count("python3 ~/.claude/hooks/assumption-guard/assumption-guard.py"),
+                1,
+            )
 
     def test_replay_script_runs_against_committed_assets(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1705,6 +1705,10 @@ def extract_claude_json_result(raw_output: str):
         result_text = result.strip()
         if not result_text:
             raise ValueError("Claude reviewer wrapper returned an empty result")
+        if result_text.startswith("```"):
+            lines = result_text.splitlines()
+            if len(lines) >= 3 and lines[0].startswith("```") and lines[-1].strip() == "```":
+                result_text = "\n".join(lines[1:-1]).strip()
         return result_text
     if isinstance(result, list):
         return json.dumps(result)

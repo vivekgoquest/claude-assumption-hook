@@ -1083,6 +1083,30 @@ class AssumptionGuardTrainingAndArtifactsTests(unittest.TestCase):
             ],
         )
 
+    def test_extract_claude_json_result_accepts_fenced_cli_wrapper(self):
+        review = load_runtime_module()
+        payload = json.dumps(
+            [
+                {
+                    "candidate_id": "candidate-a",
+                    "final_intent": "verification_narration",
+                    "final_block": False,
+                    "confidence": 0.91,
+                    "rationale": "The clause says it will verify now.",
+                    "pattern_family": "verification_narration",
+                }
+            ]
+        )
+        wrapper = json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": f"\n\n```json\n{payload}\n```",
+            }
+        )
+        extracted = review.extract_claude_json_result(wrapper)
+        self.assertEqual(json.loads(extracted), json.loads(payload))
+
     def test_review_rows_with_claude_quarantine_includes_subprocess_diagnostics(self):
         review = load_runtime_module()
         input_rows = [
